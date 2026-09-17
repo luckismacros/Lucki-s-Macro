@@ -1,0 +1,48 @@
+{
+    "location": "portal",
+    "variant": "summer",
+    "reference": [
+        1600,
+        900
+    ],
+    "actions": [
+        {
+            "time": 0.8572046756744385,
+            "type": "click",
+            "pos": [
+                804,
+                521
+            ]
+        },
+        {
+            "time": 1.3561570644378662,
+            "type": "keydown",
+            "key": "w"
+        },
+        {
+            "time": 1.4202444553375244,
+            "type": "keydown",
+            "key": "a"
+        },
+        {
+            "time": 2.837063789367676,
+            "type": "keyup",
+            "key": "a"
+        },
+        {
+            "time": 3.084179639816284,
+            "type": "keydown",
+            "key": "a"
+        },
+        {
+            "time": 3.26606822013855,
+            "type": "keyup",
+            "key": "a"
+        },
+        {
+            "time": 3.429076910018921,
+            "type": "keyup",
+            "key": "w"
+        }
+    ]
+}

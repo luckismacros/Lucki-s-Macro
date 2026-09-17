@@ -1,0 +1,29 @@
+# Environments / build artifacts - regenerated, never worth committing
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+dist_nuitka/
+*.zip
+
+# Per-install / personal data - never committed, see memory/protect-user-data.md.
+# settings.json holds the Discord webhook; presets/movement_presets are YOUR
+# recorded macros, not shipped app content (assets/default_presets is the shipped
+# copy and stays tracked); logs/debug are runtime output.
+settings.json
+presets/
+movement_presets/
+challenge_links.json
+logs/
+debug/
+diagnose_report.txt
+
+# Dev-only reference dumps - not needed to build or run the app
+_quarantine/
+Example Images/
+Images_For_Claude/
+design_mockup/
+
+# Local tooling config, not part of the project
+.claude/
