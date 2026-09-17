@@ -13,22 +13,31 @@ doesn't (and shouldn't) carry, the same reasoning settings.py keeps the Discord
 webhook out of anything that ships.
 """
 import json
+import re
 import urllib.request
 
 import config
 
-# "owner/repo" - set once the GitHub repo exists. Left unset (no "/") until then, so
-# check_for_update() is a guaranteed no-op rather than an error against a 404.
-GITHUB_REPO = ""
+# "owner/repo" - the public repo Releases are published to.
+GITHUB_REPO = "luckismacros/Lucki-s-Macro"
 
 _TIMEOUT = 6.0
 
 
 def _parse_version(v):
-    """"1.14" -> (1, 14) for a real numeric comparison - a plain string compare would
-    sort "1.9" after "1.10"."""
+    """
+    "1.14" -> (1, 14), "v1.14" -> (1, 14), "v.1.13" -> (1, 13) for a real numeric
+    comparison - a plain string compare would sort "1.9" after "1.10".
+
+    Strips the WHOLE leading non-digit run (not just a "v"/"V") before splitting -
+    this repo's own tags aren't consistent about a dot after the "v" (v1.11 vs
+    v.1.13 both exist), and stripping only "vV" would leave that dot as an empty
+    leading segment, silently prepending a 0 and throwing off the comparison for
+    any version where it mattered.
+    """
+    s = re.sub(r"^[^\d]*", "", (v or "").strip())
     parts = []
-    for p in (v or "").strip().lstrip("vV").split("."):
+    for p in s.split("."):
         digits = "".join(c for c in p if c.isdigit())
         parts.append(int(digits) if digits else 0)
     return tuple(parts) or (0,)
@@ -37,8 +46,8 @@ def _parse_version(v):
 def check_for_update():
     """
     Returns {"version": "1.15", "url": "<release page>", "notes": "<release body>"}
-    if a newer release exists, else None. Never raises - offline, GitHub down, or
-    GITHUB_REPO not set yet all just mean "no update", not an error the player sees.
+    if a newer release exists, else None. Never raises - offline, GitHub down, or a
+    blanked-out GITHUB_REPO all just mean "no update", not an error the player sees.
     """
     if "/" not in GITHUB_REPO:
         return None
@@ -52,7 +61,10 @@ def check_for_update():
         latest = str(data.get("tag_name") or "").strip()
         if not latest or _parse_version(latest) <= _parse_version(config.APP_VERSION):
             return None
-        return {"version": latest.lstrip("vV"), "url": data.get("html_url") or "",
+        # Displayed to the player, so this is cleaned up with the same leading-junk
+        # strip as the comparison itself - "v.1.13" should read "1.13", not ".1.13".
+        display = re.sub(r"^[^\d]*", "", latest) or latest
+        return {"version": display, "url": data.get("html_url") or "",
                 "notes": (data.get("body") or "").strip()}
     except Exception:
         return None
