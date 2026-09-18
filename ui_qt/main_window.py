@@ -1587,6 +1587,59 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.toast("Couldn't capture", str(e), "error")
 
+    def backup_my_data(self):
+        """
+        Zips presets/, movement_presets/, challenge_links.json and settings.json
+        (webhook stripped, same trick as make_report()'s safe dict) to the Desktop -
+        a one-click safety net before updating, reinstalling Windows, or trying
+        something risky. Separate from make_report(): that one is for troubleshooting
+        (logs + debug shots, no config), this one is for restoring your setup
+        (config, no logs/debug).
+
+        Matters most right now because updating is still a manual "download the new
+        zip and extract it" - see modules.update_check's own docstring. The new zip
+        never contains these files, so extracting it OVER the existing folder leaves
+        them untouched; this backup only matters if someone deletes the old folder
+        first instead. Once there's a real auto-updater this becomes optional rather
+        than the only safety net.
+        """
+        import json
+        import subprocess
+        import zipfile
+        base = settings.base_dir()
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        if not os.path.isdir(desktop):
+            desktop = base
+        dest = os.path.join(desktop, f"Lucki's Macro backup {time.strftime('%Y-%m-%d %H-%M')}.zip")
+        safe = {k: v for k, v in self.user_settings.items() if k != "discord_webhook"}
+        safe["discord_webhook_set"] = bool(self.user_settings.get("discord_webhook"))
+        try:
+            with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("settings_without_webhook.json", json.dumps(safe, indent=2))
+                for folder in ("presets", "movement_presets"):
+                    src = os.path.join(base, folder)
+                    if not os.path.isdir(src):
+                        continue
+                    for root, _dirs, files in os.walk(src):
+                        for name in files:
+                            path = os.path.join(root, name)
+                            z.write(path, os.path.join(folder, os.path.relpath(path, src)))
+                links = os.path.join(base, "challenge_links.json")
+                if os.path.isfile(links):
+                    z.write(links, "challenge_links.json")
+        except Exception as e:
+            self.toast("Couldn't make the backup", str(e), "error")
+            return None
+        self.log(f"Backup saved: {dest}")
+        self.toast("Backup ready", "Your recordings and settings are saved to your Desktop. Your Discord link "
+                  "isn't included - if you use one, you'll need to paste it in again after restoring.",
+                  "success", 9000)
+        try:
+            subprocess.Popen(["explorer", "/select,", dest])
+        except Exception:
+            pass
+        return dest
+
     def make_report(self):
         """
         Zips what's needed to work out a problem - logs, the newest debug screenshots,

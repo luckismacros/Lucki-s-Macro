@@ -46,6 +46,7 @@ from modules.stage_player import (
 )
 from modules.autoplay import ensure_autoplay_enabled
 from modules.portal_select import run_portal_flow, reselect_portal, click_select_portal
+from modules.polling import poll_until, target
 from modules.portal_reward import pick_portal_reward
 from modules.expedition import ExpeditionRunner
 from modules.stats import SESSION
@@ -994,10 +995,50 @@ class BotEngine:
             reenter_result = reselect_portal(category_key)
             if reenter_result == "RECONNECTED":
                 return "RECONNECTED"
-            if reenter_result:
-                return "OK"
-            self.log(f"Couldn't re-select a {portal_label} "
-                     f"(attempt {attempt}/{PORTAL_REENTER_MAX_ATTEMPTS}).")
+            if not reenter_result:
+                self.log(f"Couldn't re-select a {portal_label} "
+                         f"(attempt {attempt}/{PORTAL_REENTER_MAX_ATTEMPTS}).")
+                continue
+
+            # reselect_portal() finding and clicking its confirm button is not proof
+            # the right portal got picked: search_portal()/select_portal() type into
+            # the search box and click "the first result" at fixed coordinates with no
+            # vision check in between (see portal_select.py's own docstrings). If the
+            # search box hadn't cleared its old text yet, or the list hadn't finished
+            # re-filtering, that blind click can land on the wrong item - and ITS
+            # confirm button matches just as cleanly, so reselect_portal() reports
+            # success even though nothing that starts a stage was actually chosen.
+            # Confirmed against tester logs (2026-09-16/17): three separate runs hit
+            # exactly this - "Found ... confidence=1.00 - clicking" right here,
+            # followed by a match that never began, caught only 900s later by
+            # wait_for_match_result's stuck timeout, which killed the whole session.
+            # A short, bounded check for real stage-entry evidence catches it here
+            # instead, where a retry is still cheap.
+            confirmed = poll_until(
+                [
+                    target(config.START_GAME_BTN, True, debug_label="reenter_start_game"),
+                    target(config.AUTOPLAY_ON_BTN, True, debug_label="reenter_autoplay_on"),
+                    target(config.AUTOPLAY_OFF_BTN, True, debug_label="reenter_autoplay_off"),
+                    target(config.REWARD_SELECT_TEXT, True, debug_label="reenter_reward_select"),
+                    target(config.VICTORY_TEXT, True, debug_label="reenter_victory"),
+                    target(config.DEFEAT_TEXT, True, debug_label="reenter_defeat"),
+                ],
+                interval=1.0,
+                label="portal_reenter_verify",
+                timeout=20.0,
+                stuck_timeout=None,
+                lobby_grace=6.0,
+            )
+            if confirmed == "RECONNECTED":
+                return "RECONNECTED"
+            if confirmed != True:  # noqa: E712 - "TIMEOUT", or False (cancel/halt - caught at the next loop top)
+                health.save_debug_screenshot("portal_reenter_no_stage")
+                self.log(f"The picker accepted a selection but no match actually started "
+                         f"(attempt {attempt}/{PORTAL_REENTER_MAX_ATTEMPTS}) - probably picked "
+                         f"the wrong item. Retrying...")
+                continue
+
+            return "OK"
         return None
 
     def run_challenges(self, sequence, slot_links, give_up_if_nothing_playable=False):

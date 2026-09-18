@@ -986,8 +986,24 @@ class SettingsSheet(FloatingDialog):
             lambda: os.startfile(self.host._update_info["url"]) if self.host._update_info else None)
         u_row.addWidget(self._open_release_btn)
         sec_u.col.addLayout(u_row)
+        sec_u.col.addWidget(label("Updating is still manual: download the new version and extract it OVER your "
+                                  "existing \"Lucki's Macro\" folder (say yes to replacing files) - don't delete "
+                                  "the old folder first, or you'll lose your recordings and settings along with "
+                                  "it. Back up below first if you want to be extra safe.",
+                                  "hint", wrap=True))
         self._refresh_update_section()
         col.addWidget(sec_u)
+
+        sec_b = _Section("BACK UP YOUR DATA")
+        sec_b.col.addWidget(label("Saves your recordings, movement presets, challenge links and settings (not "
+                                  "your Discord link) to one zip on your Desktop. Good habit before updating, "
+                                  "reinstalling Windows, or trying anything you're not sure about.",
+                                  "muted", wrap=True))
+        backup_btn = Button("Back up my data", "subtle", icon="download", height=34, font_px=12)
+        backup_btn.setFocusPolicy(Qt.NoFocus)
+        backup_btn.clicked.connect(lambda: self.host.backup_my_data())
+        sec_b.col.addWidget(backup_btn, 0, Qt.AlignLeft)
+        col.addWidget(sec_b)
 
         sec = _Section("FILES")
         path = logger.get_log_path() or "(no log file)"

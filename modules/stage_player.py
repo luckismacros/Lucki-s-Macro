@@ -2,7 +2,7 @@
 import json
 import time
 import pydirectinput
-from input_controller import click_at, move_mouse_to, mark_input
+from input_controller import click_at, move_mouse_to, mark_input, high_res_timer
 from vision import capture_screen, find_template
 from modules.reconnect import handle_disconnect_if_present
 from modules.prompts import dismiss_click_anywhere_if_present, handle_game_results_if_present
@@ -66,104 +66,112 @@ def play_preset(location_key, variant_key, preset_name, skip_movement=False):
     lobby_ticks = 0  # consecutive once-a-second checks that found the lobby (see poll_until's lobby_grace)
     held_movement = set()
 
-    try:
-        for action in actions:
-            if skip_movement and action["type"] in ("keydown", "keyup"):
-                continue
+    # Windows only wakes a sleeping thread on its own scheduler tick (~15.6ms by
+    # default), so the target_time busy-wait below can fire a keyDown/keyUp that
+    # much late on every single wait - across a walk's several held-key
+    # transitions that reads as movement running a bit long or a bit short,
+    # unpredictably, worse on a slower machine with more for the scheduler to get
+    # through first. high_res_timer() tightens that to ~1-2ms for the whole
+    # timeline. See its own docstring in input_controller.py.
+    with high_res_timer():
+        try:
+            for action in actions:
+                if skip_movement and action["type"] in ("keydown", "keyup"):
+                    continue
 
-            target_time = action["time"]
+                target_time = action["time"]
 
-            while (time.time() - start_time) < target_time:
-                if config.STOP_REQUESTED:
-                    print("[Player] Playback canceled by user.")
-                    return False
-
-                # Throttled to once/sec - a screenshot+match every 10ms would be far too costly.
-                # Skipped entirely while a movement key is actually held: dismiss_click_anywhere_if_present
-                # and handle_game_results_if_present both CLICK when they match, and a click here is an
-                # absolute mouse teleport (see input_controller.click_at) - mid-walk, that spins the camera
-                # (WASD is camera-relative) and sends the character off in the wrong direction for the rest
-                # of the walk. That's what made a recorded walk come out "short, delayed... stopped before
-                # reaching the point": this whole block is new since movement got embedded in the same
-                # timeline, because only a walk holds a key long enough to ever hit this 1s throttle - a
-                # click/key gap almost never did. The old, always-reliable modules.movement_recorder.play_movement()
-                # never ran any of this during a walk either, only a non-clicking disconnect_check().
-                now = time.time()
-                if now - last_disconnect_check >= 1.0 and not held_movement:
-                    last_disconnect_check = now
-                    current_shot = capture_screen()
-                    dismiss_click_anywhere_if_present(current_shot)
-                    handle_game_results_if_present(current_shot)
-                    if handle_disconnect_if_present(current_shot):
-                        return "RECONNECTED"
-
-                    # Sent back to the lobby mid-timeline with no popup (server restart):
-                    # stop placing units into the lobby and let the caller navigate back.
-                    from modules.lobby import at_lobby
-                    if at_lobby(current_shot):
-                        lobby_ticks += 1
-                        if lobby_ticks >= 6:
-                            print("[Player] The lobby has been on screen for 6s - the game sent us back. "
-                                  "Stopping playback so the run can navigate back in.")
-                            return "RECONNECTED"
-                    else:
-                        lobby_ticks = 0
-
-                    # This is the one loop that isn't poll_until (it's a timeline being
-                    # replayed on a schedule, not a wait for something to appear), so the
-                    # health check it would otherwise inherit has to be made explicitly.
-                    # Without it, a client that dies mid-preset gets clicked at for the
-                    # rest of the timeline before anything notices.
-                    if not health.roblox_alive():
-                        print("[Player] The Roblox window is gone - stopping playback.")
-                        config.STOP_REQUESTED = True
-                        config.STUCK_DETECTED = "ROBLOX CLOSED"
-                        return False
-
-                time.sleep(0.01)
-
-            if action["type"] == "move":
-                # The recorded mouse path between clicks: replayed so the cursor travels the
-                # way the player's did, instead of jumping from one placement to the next.
-                mx, my = action["pos"]
-                move_mouse_to(*config.to_screen(mx, my))
-                continue
-
-            if action["type"] == "key":
-                print(f"[Player] Pressing '{action['value']}' at {target_time}s")
-                pydirectinput.press(action["value"])
-
-            elif action["type"] == "click":
-                x, y = action["pos"]
-                print(f"[Player] Placing unit at ({x}, {y}) at {target_time}s")
-
-                # Reduce to a fast double-click to prevent thread blocking
-                for _ in range(2):
+                while (time.time() - start_time) < target_time:
                     if config.STOP_REQUESTED:
+                        print("[Player] Playback canceled by user.")
                         return False
-                    click_at(x, y, delay_before=0.01, delay_after=0.01)
 
-            elif action["type"] in ("keydown", "keyup"):
-                # Only reached when actually walking (skip_movement filtered these out
-                # above otherwise) - held the same way modules.movement_recorder's own
-                # play_movement() holds a standalone walk.
-                walk_key = action["key"]
-                if action["type"] == "keydown":
-                    pydirectinput.keyDown(walk_key)
-                    held_movement.add(walk_key)
-                    print(f"[Player] Walking: '{walk_key}' down at {target_time}s")
-                else:
-                    pydirectinput.keyUp(walk_key)
-                    held_movement.discard(walk_key)
-                mark_input()
+                    # Throttled to once/sec - a screenshot+match every 10ms would be far too costly.
+                    # Skipped entirely while a movement key is actually held: dismiss_click_anywhere_if_present
+                    # and handle_game_results_if_present both CLICK when they match, and a click here is an
+                    # absolute mouse teleport (see input_controller.click_at) - mid-walk, that spins the camera
+                    # (WASD is camera-relative) and sends the character off in the wrong direction for the rest
+                    # of the walk. That's what made a recorded walk come out "short, delayed... stopped before
+                    # reaching the point": this whole block is new since movement got embedded in the same
+                    # timeline, because only a walk holds a key long enough to ever hit this 1s throttle - a
+                    # click/key gap almost never did. The old, always-reliable modules.movement_recorder.play_movement()
+                    # never ran any of this during a walk either, only a non-clicking disconnect_check().
+                    now = time.time()
+                    if now - last_disconnect_check >= 1.0 and not held_movement:
+                        last_disconnect_check = now
+                        current_shot = capture_screen()
+                        dismiss_click_anywhere_if_present(current_shot)
+                        handle_game_results_if_present(current_shot)
+                        if handle_disconnect_if_present(current_shot):
+                            return "RECONNECTED"
 
-        print("[Player] Timeline complete.")
-        return True
-    finally:
-        # A cancelled or interrupted walk must never leave a movement key stuck down -
-        # that would walk the character away indefinitely after playback ends.
-        for walk_key in held_movement:
-            pydirectinput.keyUp(walk_key)
+                        # Sent back to the lobby mid-timeline with no popup (server restart):
+                        # stop placing units into the lobby and let the caller navigate back.
+                        from modules.lobby import at_lobby
+                        if at_lobby(current_shot):
+                            lobby_ticks += 1
+                            if lobby_ticks >= 6:
+                                print("[Player] The lobby has been on screen for 6s - the game sent us back. "
+                                      "Stopping playback so the run can navigate back in.")
+                                return "RECONNECTED"
+                        else:
+                            lobby_ticks = 0
+
+                        # This is the one loop that isn't poll_until (it's a timeline being
+                        # replayed on a schedule, not a wait for something to appear), so the
+                        # health check it would otherwise inherit has to be made explicitly.
+                        # Without it, a client that dies mid-preset gets clicked at for the
+                        # rest of the timeline before anything notices.
+                        if not health.roblox_alive():
+                            print("[Player] The Roblox window is gone - stopping playback.")
+                            config.STOP_REQUESTED = True
+                            config.STUCK_DETECTED = "ROBLOX CLOSED"
+                            return False
+
+                    time.sleep(0.01)
+
+                if action["type"] == "move":
+                    # The recorded mouse path between clicks: replayed so the cursor travels the
+                    # way the player's did, instead of jumping from one placement to the next.
+                    mx, my = action["pos"]
+                    move_mouse_to(*config.to_screen(mx, my))
+                    continue
+
+                if action["type"] == "key":
+                    print(f"[Player] Pressing '{action['value']}' at {target_time}s")
+                    pydirectinput.press(action["value"])
+
+                elif action["type"] == "click":
+                    x, y = action["pos"]
+                    print(f"[Player] Placing unit at ({x}, {y}) at {target_time}s")
+
+                    # Reduce to a fast double-click to prevent thread blocking
+                    for _ in range(2):
+                        if config.STOP_REQUESTED:
+                            return False
+                        click_at(x, y, delay_before=0.01, delay_after=0.01)
+
+                elif action["type"] in ("keydown", "keyup"):
+                    # Only reached when actually walking (skip_movement filtered these out
+                    # above otherwise) - held the same way modules.movement_recorder's own
+                    # play_movement() holds a standalone walk.
+                    walk_key = action["key"]
+                    if action["type"] == "keydown":
+                        pydirectinput.keyDown(walk_key)
+                        held_movement.add(walk_key)
+                        print(f"[Player] Walking: '{walk_key}' down at {target_time}s")
+                    else:
+                        pydirectinput.keyUp(walk_key)
+                        held_movement.discard(walk_key)
+                    mark_input()
+
+            print("[Player] Timeline complete.")
+            return True
+        finally:
+            # A cancelled or interrupted walk must never leave a movement key stuck down -
+            # that would walk the character away indefinitely after playback ends.
+            for walk_key in held_movement:
+                pydirectinput.keyUp(walk_key)
 
 def wait_for_start_game():
     """
