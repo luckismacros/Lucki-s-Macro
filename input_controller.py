@@ -2,6 +2,7 @@
 """
 Mouse/keyboard action wrappers using pydirectinput and ctypes/win32 Windows APIs.
 """
+import contextlib
 import pydirectinput
 import ctypes
 import json
@@ -14,6 +15,42 @@ import config
 from settings import base_dir as settings_base_dir
 
 pydirectinput.PAUSE = 0.01
+
+
+@contextlib.contextmanager
+def high_res_timer():
+    """
+    Requests 1ms Windows timer resolution for the duration of the block.
+
+    time.sleep() only wakes a thread at the OS scheduler's own timer tick, which
+    defaults to ~15.6ms - so a recorded macro's keyDown/keyUp timing (see
+    modules.stage_player.play_preset(), the one place a recording is actually
+    replayed live) can overshoot its target by up to that much on every single
+    wait it does. A walk holds and releases several keys in a row, each with its
+    own wait, so those overshoots don't cancel out - they land at slightly
+    different points in each hold, which is what turns into movement that plays
+    back a bit longer or a bit shorter than it was recorded, unpredictably.
+    Worse on an older/slower machine, where the scheduler has more competing
+    work to get through before it wakes this thread again. Bringing the tick
+    down to 1ms - the finest grain Windows allows - tightens every sleep() in
+    the block to within roughly 1-2ms instead.
+
+    Costs a little extra power/CPU wake-ups system-wide while active, which is
+    why this is scoped to just the playback loop rather than the whole run.
+    """
+    raised = False
+    try:
+        raised = ctypes.windll.winmm.timeBeginPeriod(1) == 0
+    except Exception:
+        raised = False
+    try:
+        yield
+    finally:
+        if raised:
+            try:
+                ctypes.windll.winmm.timeEndPeriod(1)
+            except Exception:
+                pass
 
 # Windows API constants
 MOUSEEVENTF_WHEEL = 0x0800
@@ -972,17 +1009,26 @@ def anchor_camera(zoom_out_steps=None):
     config.CAMERA_ZOOM_OUT_STEPS (Story/Raids/Challenges/Portals). Expeditions passes
     its own value from the slider in its panel. Recorded macros depend on this: change
     it and the units land in different places, so re-record after changing it.
+
+    Every gap below is scaled by config.SLOWNESS, the same way click_at()'s hover
+    jitter is (see its own comment) - each scroll notch and each pitch-drag step is
+    a separate mouse event that Roblox has to receive AND draw a frame for before it
+    counts as registered, on a laptop that can take noticeably longer than the fixed
+    gap this used to sleep for. Landing on a camera angle a few degrees short of
+    top-down - or a zoom level short of fully in/out - throws off every position a
+    macro recorded relative to it, which reads as the walk itself being imprecise
+    when the actual cause is the camera never finishing this reset.
     """
-    time.sleep(1.0)
+    time.sleep(1.0 * config.SLOWNESS)
 
     # 1. Zoom in close to reset distance drift. Deliberately stops just short of a full
     #    zero-distance zoom - going fully to 0 tends to force Roblox into first-person mode,
     #    which has no pitch clamp and can flip/spin the camera during step 2 below.
     for _ in range(config.CAMERA_ZOOM_IN_STEPS):
         _native_scroll(120)
-        time.sleep(0.015)
+        time.sleep(0.015 * config.SLOWNESS)
 
-    time.sleep(0.5)
+    time.sleep(0.5 * config.SLOWNESS)
 
     # 2. Angle camera Top-Down (raw relative drag, 0 horizontal drift).
     #    Deliberately does NOT teleport the cursor first (no moveTo/absolute jump): once
@@ -995,22 +1041,22 @@ def anchor_camera(zoom_out_steps=None):
     #    is swallowed - a broken state that survives until the user clicks manually.
     pydirectinput.mouseDown(button='right')
     try:
-        time.sleep(0.1)
+        time.sleep(0.1 * config.SLOWNESS)
 
         for _ in range(config.CAMERA_PITCH_STEPS):
             win32api.mouse_event(win32con.MOUSEEVENTF_MOVE, 0, config.CAMERA_PITCH_STEP_SIZE, 0, 0)
-            time.sleep(0.02)
+            time.sleep(0.02 * config.SLOWNESS)
 
-        time.sleep(0.1)
+        time.sleep(0.1 * config.SLOWNESS)
     finally:
         pydirectinput.mouseUp(button='right')
-    time.sleep(0.5)
+    time.sleep(0.5 * config.SLOWNESS)
 
     # 3. Zoom all the way OUT (Scroll DOWN) to max distance
     steps = config.CAMERA_ZOOM_OUT_STEPS if zoom_out_steps is None else max(0, int(zoom_out_steps))
     for _ in range(steps):
         _native_scroll(-120)
-        time.sleep(0.015)
+        time.sleep(0.015 * config.SLOWNESS)
 
     mark_input()
     time.sleep(0.5)
