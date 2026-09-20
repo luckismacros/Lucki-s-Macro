@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "1.16"
+APP_VERSION = "1.16.1"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -956,7 +956,16 @@ FISHING_RANK_TEMPLATES = ["assets/templates/fishing/1.png"]
 # modules.fishing.start_fishing. If it hasn't been recorded for a given portal
 # category yet, fishing still goes ahead and casts at that same spot from wherever
 # Auto Play already is - see run_portal().
-PORTAL_AUTOPLAY_WALK_PRESET = "autoplay_movemet"
+#
+# Correctly spelled. PORTAL_AUTOPLAY_WALK_PRESET_LEGACY below is the original name
+# (missing the "n") this app's shipped placeholder used, and told players to record
+# over verbatim - a real player recorded a perfectly good walk under the CORRECT
+# spelling instead, and the bot silently went on playing the old placeholder forever,
+# since nothing ever looked for the new file. See engine.py's
+# _autoplay_walk_preset_name(), which checks both so neither past nor future
+# instructions relying on either spelling can go silently unused again.
+PORTAL_AUTOPLAY_WALK_PRESET = "autoplay_movement"
+PORTAL_AUTOPLAY_WALK_PRESET_LEGACY = "autoplay_movemet"
 
 # Cast point for fishing, always used now rather than wherever the cursor happens to
 # be left (see modules.fishing.start_fishing) - the option under Fishing in the
