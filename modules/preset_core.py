@@ -45,6 +45,33 @@ def is_default_preset(location_key, variant_key, name):
     return os.path.exists(os.path.join(DEFAULT_PRESET_DIR, f"{location_key}_{variant_key}_{name}.json"))
 
 
+def is_unedited_default(location_key, variant_key, name):
+    """
+    True if the active preset in presets/ is still byte-for-byte the shipped
+    starter recording (installed once by install_default_presets(), never touched
+    since) - as opposed to is_default_preset(), which only says a shipped default
+    EXISTS for this slot and stays True forever even after the user re-records it.
+
+    Used to warn about slots nothing in the UI ever prompts the player to check
+    (config.PORTAL_AUTOPLAY_WALK_PRESET is the current example: a real gameplay
+    recording living under a name the Portals page never shows), where "the
+    default is still active" can otherwise go unnoticed indefinitely. False (not
+    an error) if either file is missing or unreadable - nothing to warn about
+    without a shipped default to compare against.
+    """
+    filename = f"{location_key}_{variant_key}_{name}.json"
+    default_path = os.path.join(DEFAULT_PRESET_DIR, filename)
+    active_path = os.path.join(PRESET_DIR, filename)
+    try:
+        with open(default_path, "rb") as f:
+            default_bytes = f.read()
+        with open(active_path, "rb") as f:
+            active_bytes = f.read()
+    except OSError:
+        return False
+    return default_bytes == active_bytes
+
+
 def restore_default_preset(location_key, variant_key, name):
     """Puts the shipped version of a default recording back, replacing local edits."""
     filename = f"{location_key}_{variant_key}_{name}.json"

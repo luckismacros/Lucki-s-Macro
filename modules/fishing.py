@@ -5,9 +5,13 @@ equipped un-equips the rod, so it's only ever clicked once, up front, to equip.
 With Auto Rod equipped, casting at the fishing spot is enough - the rod handles
 catching on its own.
 
-The periodic re-cast never touches the equip button - only the fishing spot. There is
-deliberately no rank-badge-driven RE-EQUIP logic: a detection false negative there
-un-equips a perfectly good session.
+The periodic re-cast never touches the equip button - only the fishing spot. A single
+rank-badge miss is NOT treated as "not equipped" - a detection false negative there
+would un-equip a perfectly good session. FishingTicker does attempt one recovery
+click per match, but only after several consecutive misses early in that match (see
+EQUIP_LOST_CONFIRM_TICKS) - real-world logs showed the badge going missing for a
+sustained stretch (hours, in the worst observed case) specifically after a reconnect,
+with nothing ever re-checking once already_equipped latched True.
 
 The cast does need SOME idea of whether a match is still running, because as a pure
 timer it kept clicking through Victory / reward-choice / Select Portal - which is how
@@ -135,6 +139,22 @@ def find_rank_badge(screenshot, preferred=None):
     return None
 
 
+# How many consecutive early ticks the rank badge has to miss, in a row, before
+# FishingTicker stops treating it as "hasn't rendered yet" and re-clicks fishing.png
+# to try to recover. A single miss is routine - the badge needs a moment to appear
+# even when everything is genuinely fine - which is why this was only ever a
+# one-shot diagnostic before. But a run of user-supplied logs (2026-09-18..20, 7
+# reconnects) showed every single reconnect produced at least one miss right after
+# it, and one of them stayed missing - not equipped, silently casting into nothing -
+# for over FIVE HOURS with nothing ever trying to fix it, because already_equipped
+# is never re-checked once the run believes it's true (see start_fishing's own
+# docstring for why that memory isn't forgotten on its own). Several consecutive
+# misses, a couple of seconds apart, is a much stronger signal than the one-shot
+# check ever was - in that same log data, every miss away from a reconnect was a
+# single isolated blip that matched again on the very next tick.
+EQUIP_LOST_CONFIRM_TICKS = 3
+
+
 class FishingTicker:
     """
     Call tick() once per poll cycle while a match is in progress. Re-clicks wherever
@@ -150,7 +170,9 @@ class FishingTicker:
         self.cast_pos = cast_pos
         self.last_click = time.time()
         self.holding = False
-        self.badge_checked = False
+        self.badge_checked = 0
+        self.badge_ever_seen = False
+        self.recovery_tried = False
 
     def tick(self):
         now = time.time()
@@ -159,15 +181,6 @@ class FishingTicker:
         self.last_click = now
 
         screenshot = capture_screen()
-
-        # One-shot diagnostic, not a gate: says in the log whether the rank badge is
-        # findable during a live match at all. It was tried as the gate and blocked
-        # every single cast for a whole match, so nothing depends on it until that is
-        # understood - but the answer is worth having for free.
-        if not self.badge_checked:
-            self.badge_checked = True
-            rank = find_rank_badge(screenshot)
-            print(f"[Fishing] Rank badge check: {rank.rsplit('/', 1)[-1] if rank else 'none of the 6 matched'}.")
 
         # Fail OPEN: cast unless something says the match is over. The inverse (cast
         # only when fishing is confirmed) is what silently stopped fishing entirely -
@@ -183,4 +196,32 @@ class FishingTicker:
             return
 
         self.holding = False
+
+        # Checked for the first few ticks of a match only, not continuously (see
+        # EQUIP_LOST_CONFIRM_TICKS) - this is a one-time recovery attempt per match,
+        # not the rejected continuous gate.
+        if not self.recovery_tried and self.badge_checked < EQUIP_LOST_CONFIRM_TICKS:
+            self.badge_checked += 1
+            rank = find_rank_badge(screenshot)
+            if rank:
+                self.badge_ever_seen = True
+                print(f"[Fishing] Rank badge check: {rank.rsplit('/', 1)[-1]}.")
+            else:
+                print(f"[Fishing] Rank badge check ({self.badge_checked}/{EQUIP_LOST_CONFIRM_TICKS}): "
+                      f"none of the 6 matched.")
+
+            if not self.badge_ever_seen and self.badge_checked >= EQUIP_LOST_CONFIRM_TICKS:
+                self.recovery_tried = True
+                match = find_template(screenshot, config.FISHING_BTN, config.MATCH_THRESHOLD,
+                                      debug_label="fishing_btn")
+                if match:
+                    fx, fy, _ = match
+                    print(f"[Fishing] No rank badge after {EQUIP_LOST_CONFIRM_TICKS} checks - the rod doesn't "
+                          f"look equipped. Clicking fishing.png at ({fx}, {fy}) to try to recover.")
+                    click_at(fx, fy)
+                    time.sleep(0.3)
+                else:
+                    print(f"[Fishing] No rank badge after {EQUIP_LOST_CONFIRM_TICKS} checks, and fishing.png "
+                          f"isn't on screen either - can't attempt a recovery click right now.")
+
         click_at(*self.cast_pos) if self.cast_pos else click_in_place()

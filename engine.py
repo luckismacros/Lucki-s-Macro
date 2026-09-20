@@ -52,6 +52,7 @@ from modules.expedition import ExpeditionRunner
 from modules.stats import SESSION
 from modules import health, notify
 from modules.fishing import start_fishing
+from modules import preset_core
 
 # How many times to retry reopening the portal picker and re-selecting after a
 # reward, before giving up on the run entirely. Confirmed live (2026-09-13) that a
@@ -165,6 +166,15 @@ class BotEngine:
         # since walked_for's key changes to the new stage.
         walked_for = [None]
 
+        # Whether the next wait_for_start_game() call is for a stage the character
+        # never left (Repeat Stage / Next Stage, looping straight back into this same
+        # while-loop) rather than a fresh trip in from the lobby - see that function's
+        # `resumed` param for why this matters (a real, measured 45s-per-match cost on
+        # an Auto-Start account, since this exact pattern never shows the panel-less
+        # frame the fast detection path needs). Reset to False in the same place
+        # walked_for is - any fresh lobby trip is a fresh map load, not a resume.
+        resumed_stage = [False]
+
         def _resolve_stage_mode():
             """
             Whether THIS stage should use the game's Auto Play or a recorded preset.
@@ -192,6 +202,7 @@ class BotEngine:
             # stage's own starting position (or about to be) - so a walk gets to play
             # again next match, whatever it played for last.
             walked_for[0] = None
+            resumed_stage[0] = False
             while True:
                 self.set_phase("NAVIGATING MENUS", "#4fc3f7")
 
@@ -292,7 +303,7 @@ class BotEngine:
 
             while not config.STOP_REQUESTED:
                 self.set_phase("WAITING FOR START GAME", "#4fc3f7")
-                result = wait_for_start_game()
+                result = wait_for_start_game(resumed=resumed_stage[0])
 
                 if result == "RECONNECTED":
                     self.log("Disconnected and reconnected - back at the lobby. Redoing navigation...")
@@ -303,6 +314,11 @@ class BotEngine:
                 if not result:
                     break
 
+                # From here on (Repeat Stage/Next Stage looping straight back to the
+                # top without a fresh lobby trip), the character never left the stage -
+                # see resumed_stage's own comment.
+                resumed_stage[0] = True
+                already_started = result == "ALREADY_STARTED"
                 SESSION.match_started()
                 self.log("Match Loaded! Anchoring camera...")
                 self.set_phase("ANCHORING CAMERA", "#4fc3f7")
@@ -328,6 +344,15 @@ class BotEngine:
                 else:
                     stage_key = (location_key, variant_key)
                     skip_walk = walked_for[0] == stage_key
+                    if already_started and not skip_walk:
+                        # Auto Start skipped the button and the match is already
+                        # running - the walk was recorded against a static,
+                        # pre-match camera that was never true here, and playing it
+                        # now just burns match time walking against a moving target
+                        # (see the identical fix/reasoning in run_portal()).
+                        self.log("Auto Start already began the match - skipping the "
+                                 "walk (match is already running) and placing units now.")
+                        skip_walk = True
                     self.log("Executing Timeline Preset..." if not skip_walk else
                             "Executing Timeline Preset (already at the recorded spot - not walking)...")
                     self.set_phase("PLAYING TIMELINE", "#2e7d32")
@@ -561,6 +586,7 @@ class BotEngine:
             # no destination to pick. Auto Play has no preset to embed a walk into, so
             # it still needs its own standalone walk, played below only when fishing.
             is_macro = bool(preset_name) and preset_name != config.AUTO_PLAY_PRESET_NAME
+            warned_default_walk = False
 
             while not config.STOP_REQUESTED:
                 if need_full_navigation:
@@ -653,7 +679,13 @@ class BotEngine:
                     is_repeat_match = reentered
 
                 self.set_phase("WAITING FOR START GAME", "#4fc3f7")
-                game_result = wait_for_start_game()
+                # is_repeat_match here means "re-entered a stage the character never
+                # left" (Select Portal / Repeat Stage) - exactly the case that never
+                # shows a panel-less transition frame, so it's passed through as
+                # `resumed` to skip the 45s grace fallback (see wait_for_start_game's
+                # own docstring - this was measured costing real minutes per session
+                # on an Auto-Start account).
+                game_result = wait_for_start_game(resumed=is_repeat_match)
                 if game_result == "RECONNECTED":
                     self.log("Disconnected while loading - reconnected. Redoing navigation...")
                     need_full_navigation = True
@@ -661,6 +693,25 @@ class BotEngine:
                     continue
                 if not game_result:
                     return
+
+                if game_result == "ALREADY_STARTED" and not is_repeat_match:
+                    # The game's own Auto Start setting skipped the button entirely and
+                    # the match is already running (see wait_for_start_game). Treating
+                    # this like any other fresh entry still spent several real seconds
+                    # on anchor_camera()'s zoom/drag/zoom sequence and then a full
+                    # separately-recorded walk before ever touching Fishing/Start -
+                    # all of it against a match whose clock (and, for Auto Play, whose
+                    # own movement) was already running the whole time, on the one
+                    # setting combination most likely to burn through a short match
+                    # before fishing ever got equipped. Reusing is_repeat_match (the
+                    # same "already at the recorded spot, don't walk" signal a genuine
+                    # repeat match uses) skips straight to checking Auto Play/pressing
+                    # Start/casting instead - the one thing worth spending the
+                    # already-ticking clock on.
+                    self.log("Auto Start already began the match - skipping the camera "
+                             "reset and walk (match is already running) and going "
+                             "straight to Auto Play/Start/fishing.")
+                    is_repeat_match = True
 
                 # Whether this match should be fishing, and where to cast. Always the
                 # Portals page's configured spot (config.PORTAL_AUTOPLAY_FISH_X/
@@ -687,6 +738,14 @@ class BotEngine:
                     # slot under the reserved name config.PORTAL_AUTOPLAY_WALK_PRESET),
                     # not a different movement system. Only on a fresh entry, same as
                     # everywhere else a leading walk is skipped on a genuine repeat.
+                    if not warned_default_walk and preset_core.is_unedited_default(
+                            config.PORTAL_PRESET_LOCATION, category_key, config.PORTAL_AUTOPLAY_WALK_PRESET):
+                        warned_default_walk = True
+                        self.log(f"NOTE: the Auto Play fishing walk for {portal_label} is still the "
+                                 f"few-second placeholder this app ships with - it was never re-recorded. "
+                                 f"If the character isn't reaching the fishing spot, re-record it: switch "
+                                 f"'How units get placed' to My macro, New, name it exactly 'autoplay "
+                                 f"movemet', record (F8) the full walk, then switch back to Game's Auto Play.")
                     self.log("Walking to the fishing spot (Auto Play)...")
                     self.set_phase("WALKING", "#4fc3f7")
                     walk_result = play_preset(config.PORTAL_PRESET_LOCATION, category_key,

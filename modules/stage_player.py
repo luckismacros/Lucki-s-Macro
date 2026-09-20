@@ -8,7 +8,7 @@ from modules.reconnect import handle_disconnect_if_present
 from modules.prompts import dismiss_click_anywhere_if_present, handle_game_results_if_present
 from modules.fishing import FishingTicker
 from modules.autoclicker import AutoClickerTicker
-from modules.polling import poll_until, target
+from modules.polling import poll_until, target, settle_match, click_until_gone
 from modules import health
 import config
 
@@ -66,6 +66,19 @@ def play_preset(location_key, variant_key, preset_name, skip_movement=False):
     lobby_ticks = 0  # consecutive once-a-second checks that found the lobby (see poll_until's lobby_grace)
     held_movement = set()
 
+    # The full span the recorded walk covers, not just "is a key down at this exact
+    # instant". A walk that changes direction releases one movement key and presses
+    # another a moment later - held_movement is briefly EMPTY right there even though
+    # the walk is still very much in progress. That gap used to be enough to let the
+    # 1s-throttled check below fire and click (dismiss_click_anywhere_if_present /
+    # handle_game_results_if_present), which spins the camera (WASD is camera-relative)
+    # and sends the rest of the walk off in the wrong direction - the exact "short,
+    # delayed... stopped before reaching the point" symptom the `not held_movement`
+    # guard was added for, just not wide enough to close every gap it can happen in.
+    # Skipped entirely when skip_movement=True, since none of those actions play at all.
+    walk_times = [] if skip_movement else [a["time"] for a in actions if a["type"] in ("keydown", "keyup")]
+    walk_start, walk_end = (min(walk_times), max(walk_times)) if walk_times else (None, None)
+
     # Windows only wakes a sleeping thread on its own scheduler tick (~15.6ms by
     # default), so the target_time busy-wait below can fire a keyDown/keyUp that
     # much late on every single wait - across a walk's several held-key
@@ -87,7 +100,8 @@ def play_preset(location_key, variant_key, preset_name, skip_movement=False):
                         return False
 
                     # Throttled to once/sec - a screenshot+match every 10ms would be far too costly.
-                    # Skipped entirely while a movement key is actually held: dismiss_click_anywhere_if_present
+                    # Skipped entirely for the whole walk window (see walk_start/walk_end above), not just
+                    # while a movement key happens to be held this instant: dismiss_click_anywhere_if_present
                     # and handle_game_results_if_present both CLICK when they match, and a click here is an
                     # absolute mouse teleport (see input_controller.click_at) - mid-walk, that spins the camera
                     # (WASD is camera-relative) and sends the character off in the wrong direction for the rest
@@ -97,7 +111,8 @@ def play_preset(location_key, variant_key, preset_name, skip_movement=False):
                     # click/key gap almost never did. The old, always-reliable modules.movement_recorder.play_movement()
                     # never ran any of this during a walk either, only a non-clicking disconnect_check().
                     now = time.time()
-                    if now - last_disconnect_check >= 1.0 and not held_movement:
+                    in_walk_window = walk_start is not None and walk_start <= (now - start_time) <= walk_end
+                    if now - last_disconnect_check >= 1.0 and not held_movement and not in_walk_window:
                         last_disconnect_check = now
                         current_shot = capture_screen()
                         dismiss_click_anywhere_if_present(current_shot)
@@ -173,7 +188,7 @@ def play_preset(location_key, variant_key, preset_name, skip_movement=False):
             for walk_key in held_movement:
                 pydirectinput.keyUp(walk_key)
 
-def wait_for_start_game():
+def wait_for_start_game(resumed=False):
     """
     Polls until the green Start Game button appears (map load) - or until it becomes
     clear the match already started without it, because the account has the game's
@@ -182,6 +197,21 @@ def wait_for_start_game():
     stuck even though the match is playing out fine. Does NOT click Start Game
     itself either way - normal preset play doesn't need it, the match starts on its
     own once loaded.
+
+    resumed=True tells this call it's being asked right after re-entering a stage the
+    character never actually left (a Select Portal / Repeat Stage re-entry, as opposed
+    to a fresh trip in from the lobby) - the caller already knows this from its own
+    is_repeat_match tracking. It matters because of a real, measured cost: on an
+    Auto-Start account, this farming pattern NEVER shows a panel-less transition
+    frame (the side panel is up continuously across the reselect), so
+    _check_already_started's fast 3-tick path can never fire - every single one of
+    these re-entries paid the full 45s START_GAME_LINGER_GRACE fallback instead.
+    Real logs from a genuinely slow, Auto-Start-on account (2026-09-18..20) showed
+    this happening on roughly a fifth of all matches, several dozen times a day -
+    over 100 minutes of pure dead waiting in just under 3 days of logs. resumed=True
+    skips straight to that fast path, since the caller's own context already rules
+    out the one thing the grace period exists to protect against (mistaking a map
+    still genuinely loading for Auto Start).
 
     There's no button to detect for the Auto Start case - only its absence - so it's
     inferred instead from the in-game Auto Play toggle: that button lives in the same
@@ -205,7 +235,9 @@ def wait_for_start_game():
     """
     print("[Player] Waiting for Start Game button (map load)...")
     already_started_streak = 0
-    seen_without_panel = False
+    # Skips straight to the fast 3-tick path below (see the `resumed` param) instead
+    # of requiring a panel-less frame this call was told in advance it will never see.
+    seen_without_panel = resumed
     started_waiting = time.time()
 
     def _check_already_started(screenshot):
@@ -262,20 +294,44 @@ def wait_for_start_game():
         lobby_grace=25.0,
     )
 
+# How long click_start_game() keeps looking for the button before giving up.
+START_GAME_CLICK_SEARCH_SECONDS = 5.0
+
 def click_start_game():
     """
     Finds and clicks the Start Game button. Normal preset play never needs this - the
     match starts on its own once loaded - but Auto Play mode does nothing else to signal
     "ready", so it needs an explicit click here to actually begin the match.
+
+    Retries for a few seconds and confirms the click actually took (the button
+    disappearing), rather than one screenshot, one find, one click. This button
+    render right after wait_for_start_game()'s own poll first caught it - the exact
+    race settle_match()/click_until_gone() exist to cover everywhere else a button
+    gets clicked in this codebase - and a miss here used to be silent: no retry, no
+    confirmation, nothing in the log beyond "could not find it". A tester reported
+    exactly that live: the button sometimes just never got clicked.
     """
-    screenshot = capture_screen()
-    match = find_template(screenshot, config.START_GAME_BTN, config.MATCH_THRESHOLD, debug_label="start_game_btn")
-    if match:
-        x, y, _ = match
-        print(f"[Player] Clicking Start Game at ({x}, {y}).")
-        click_at(x, y, clicks=2)
+    deadline = time.time() + START_GAME_CLICK_SEARCH_SECONDS
+    match = None
+    while time.time() < deadline:
+        if config.STOP_REQUESTED:
+            return False
+        match = find_template(capture_screen(), config.START_GAME_BTN, config.MATCH_THRESHOLD,
+                              debug_label="start_game_btn")
+        if match:
+            break
+        time.sleep(0.3)
+
+    if not match:
+        print("[Player] Could not find Start Game button to click.")
+        return False
+
+    match = settle_match(config.START_GAME_BTN, match, "click_start_game") or match
+    x, y, confidence = match
+    print(f"[Player] Clicking Start Game at ({x}, {y}), confidence={confidence:.2f}.")
+    if click_until_gone(config.START_GAME_BTN, match, "click_start_game", clicks=2):
         return True
-    print("[Player] Could not find Start Game button to click.")
+    print("[Player] Start Game button was still on screen after clicking - it may not have registered.")
     return False
 
 def match_already_started(shot=None):
