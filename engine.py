@@ -78,6 +78,34 @@ RESTART_RESET_AFTER = 600
 NEVER_STOP_EXEMPT_PREFIXES = ("TOO MANY DEFEATS",)
 
 
+def _autoplay_walk_preset_name(category_key):
+    """
+    Which name the Auto Play fishing walk is actually saved under for this portal
+    category: config.PORTAL_AUTOPLAY_WALK_PRESET ("autoplay_movement") if that file
+    exists, else config.PORTAL_AUTOPLAY_WALK_PRESET_LEGACY ("autoplay_movemet", the
+    original typo'd name) if THAT exists, else the correct spelling (nothing
+    recorded yet - same as the correct name being missing, and what a fresh install's
+    shipped placeholder installs under after the asset rename that came with this
+    fix).
+
+    Exists because that typo was real, shipped, and repeated verbatim in this app's
+    own in-game instructions for how to fix a too-short walk - a player followed
+    them exactly, recorded a perfectly good walk under the CORRECTLY spelled name,
+    and the bot kept silently playing the old placeholder anyway, since nothing ever
+    looked for the new file (confirmed live 2026-09-2x). Checking both, correct
+    spelling first, means a fresh recording under either name is found.
+    """
+    preferred = preset_core.preset_path(config.PORTAL_PRESET_LOCATION, category_key,
+                                        config.PORTAL_AUTOPLAY_WALK_PRESET)
+    if os.path.exists(preferred):
+        return config.PORTAL_AUTOPLAY_WALK_PRESET
+    legacy = preset_core.preset_path(config.PORTAL_PRESET_LOCATION, category_key,
+                                     config.PORTAL_AUTOPLAY_WALK_PRESET_LEGACY)
+    if os.path.exists(legacy):
+        return config.PORTAL_AUTOPLAY_WALK_PRESET_LEGACY
+    return config.PORTAL_AUTOPLAY_WALK_PRESET
+
+
 class BotEngine:
     def __init__(self, ui):
         self.ui = ui
@@ -735,21 +763,24 @@ class BotEngine:
                     # Auto Play has no macro of its own to carry a walk in, so fishing
                     # there plays this separately recorded one first - the player's own
                     # recording (made the normal way, via this same portal's "My macro"
-                    # slot under the reserved name config.PORTAL_AUTOPLAY_WALK_PRESET),
-                    # not a different movement system. Only on a fresh entry, same as
-                    # everywhere else a leading walk is skipped on a genuine repeat.
+                    # slot under a reserved name), not a different movement system.
+                    # Only on a fresh entry, same as everywhere else a leading walk is
+                    # skipped on a genuine repeat. See _autoplay_walk_preset_name() for
+                    # why the name isn't just config.PORTAL_AUTOPLAY_WALK_PRESET.
+                    walk_preset_name = _autoplay_walk_preset_name(category_key)
                     if not warned_default_walk and preset_core.is_unedited_default(
-                            config.PORTAL_PRESET_LOCATION, category_key, config.PORTAL_AUTOPLAY_WALK_PRESET):
+                            config.PORTAL_PRESET_LOCATION, category_key, walk_preset_name):
                         warned_default_walk = True
                         self.log(f"NOTE: the Auto Play fishing walk for {portal_label} is still the "
                                  f"few-second placeholder this app ships with - it was never re-recorded. "
                                  f"If the character isn't reaching the fishing spot, re-record it: switch "
-                                 f"'How units get placed' to My macro, New, name it exactly 'autoplay "
-                                 f"movemet', record (F8) the full walk, then switch back to Game's Auto Play.")
+                                 f"'How units get placed' to My macro, New, name it exactly "
+                                 f"'{config.PORTAL_AUTOPLAY_WALK_PRESET}', record (F8) the full walk, then "
+                                 f"switch back to Game's Auto Play.")
                     self.log("Walking to the fishing spot (Auto Play)...")
                     self.set_phase("WALKING", "#4fc3f7")
                     walk_result = play_preset(config.PORTAL_PRESET_LOCATION, category_key,
-                                              config.PORTAL_AUTOPLAY_WALK_PRESET, skip_movement=False)
+                                              walk_preset_name, skip_movement=False)
                     if walk_result == "RECONNECTED":
                         self.log("Disconnected mid-walk - reconnected. Redoing navigation...")
                         need_full_navigation = True
@@ -760,7 +791,7 @@ class BotEngine:
                         # always at the configured coordinates now (see cast_pos
                         # above), not wherever this walk would have left the cursor.
                         self.log(f"No separate walk recorded for Auto Play fishing "
-                                 f"('{config.PORTAL_AUTOPLAY_WALK_PRESET}') - casting at the configured "
+                                 f"('{walk_preset_name}') - casting at the configured "
                                  f"coordinates from wherever Auto Play already is.")
 
                 if is_macro:
