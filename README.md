@@ -7,7 +7,7 @@ WHAT THIS IS
 Lucki's Macro is a desktop tool for a Roblox tower-defense game. It looks at
 your own screen, recognises buttons/screens it already has pictures of, and
 sends mouse clicks and key presses to Roblox the same way you would - so it
-can place units, start matches, farm raids/portals/expeditions, and generally
+can place units, start matches, farm raids/portals/expeditions/Boss Rush, and generally
 keep a run going while you're not sitting at the keyboard.
 
 It does NOT:

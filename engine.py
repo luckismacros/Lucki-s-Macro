@@ -49,6 +49,7 @@ from modules.portal_select import run_portal_flow, reselect_portal, click_select
 from modules.polling import poll_until, target
 from modules.portal_reward import pick_portal_reward
 from modules.expedition import ExpeditionRunner
+from modules.bossrush import BossRushRunner
 from modules.stats import SESSION
 from modules import health, notify
 from modules.fishing import start_fishing
@@ -1443,6 +1444,80 @@ class BotEngine:
             self.log(f"ERROR: Bot crashed unexpectedly - {e}")
             # Without this a crash reached _cleanup() looking like a clean finish and was
             # reported as a green "Run finished" right after the "Bot crashed" alert.
+            if not self.user_stop_requested:
+                config.STUCK_DETECTED = f"CRASHED ({type(e).__name__})"
+            try:
+                shot_bytes = health.jpg_bytes()
+            except Exception:
+                shot_bytes = None
+            notify.send(f"```{e}```", category="problems", title="Bot crashed",
+                        good=False, image_bytes=shot_bytes)
+        finally:
+            self._cleanup()
+
+    def run_boss_rush(self, gate_preset_name, boss_preset_name, walk_preset_names):
+        """
+        Farms Boss Rush: lobby -> hub -> 6 gates -> boss -> Repeat Stage -> again. The
+        flow itself lives in modules/bossrush.py; this owns the outer loop, reconnect
+        handling and how a run's end is reported - same shape as run_expedition() above.
+
+        walk_preset_names: {gate_number (1-6): recording name}, one per gate - see
+        modules.bossrush.BossRushRunner.
+        """
+        def _mark_failure(reason):
+            if not config.STOP_REQUESTED and not config.STUCK_DETECTED:
+                config.STUCK_DETECTED = reason
+
+        try:
+            self.set_phase("DETECTING STATE", "#a8a8a8")
+            if not self.ui.focus_and_pin():
+                return
+
+            runner = BossRushRunner(gate_preset_name, boss_preset_name, walk_preset_names,
+                                    set_phase=self.set_phase)
+            screenshot = capture_screen()
+            self.ui.calibrate_ui_scale(screenshot)
+            self.log(f"Boss Rush: gate macro '{gate_preset_name}', boss macro '{boss_preset_name}'. "
+                     f"Navigating in...")
+
+            need_nav = True
+            while not config.STOP_REQUESTED:
+                if need_nav:
+                    result = runner.navigate()
+                    if result == "RECONNECTED":
+                        self.log("Disconnected mid-navigation - reconnected. Retrying...")
+                        continue
+                    if not result:
+                        self.log("Failed to navigate to Boss Rush.")
+                        _mark_failure("BOSS RUSH NAVIGATION FAILED")
+                        return
+                    need_nav = False
+
+                result = runner.play_cycle()
+                if result == "RECONNECTED":
+                    self.log("Disconnected mid-run - reconnected. Redoing navigation...")
+                    need_nav = True
+                    continue
+                if result == "REPEAT":
+                    if self._limit_reached():
+                        # Left on screen deliberately (see BossRushRunner.fight_boss's own
+                        # comment) - a queue's next step can Exit from Repeat Stage same as
+                        # every other mode.
+                        return
+                    self.log("Boss defeated - repeating.")
+                    rep = runner.click_repeat_if_present()
+                    if rep == "RECONNECTED":
+                        self.log("Disconnected after Repeat Stage - reconnected. Redoing navigation...")
+                        need_nav = True
+                        continue
+                    if not rep:
+                        self.log("Repeat Stage didn't click - retrying...")
+                        continue
+                    continue
+                _mark_failure("BOSS RUSH RUN FAILED")
+                return
+        except Exception as e:
+            self.log(f"ERROR: Bot crashed unexpectedly - {e}")
             if not self.user_stop_requested:
                 config.STUCK_DETECTED = f"CRASHED ({type(e).__name__})"
             try:

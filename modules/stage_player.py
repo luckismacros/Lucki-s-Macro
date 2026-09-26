@@ -12,7 +12,18 @@ from modules.polling import poll_until, target, settle_match, click_until_gone
 from modules import health
 import config
 
-def play_preset(location_key, variant_key, preset_name, skip_movement=False):
+def _outside_game(pos):
+    """
+    True for a recorded point that isn't inside the game's reference frame. The click
+    that pressed Stop on the recording bar (or on the macro window docked beside Roblox)
+    is captured as the last action of a recording, at a negative x; replayed, it clicks
+    whatever is on the player's desktop at that spot - the macro's own buttons included.
+    """
+    x, y = pos
+    return x < 0 or y < 0 or x > config.REFERENCE_WIDTH or y > config.REFERENCE_HEIGHT
+
+
+def play_preset(location_key, variant_key, preset_name, skip_movement=False, movement_only=False):
     """
     Plays back a recording: number-key presses, clicks, the mouse path between them,
     and - if the player walked (held W/A/S/D/Space) before placing anything - that
@@ -28,6 +39,11 @@ def play_preset(location_key, variant_key, preset_name, skip_movement=False):
     true (engine.BotEngine tracks it per stage; Portals' own is_repeat_match already
     tracked the equivalent thing for its old walk-to-fish system) - this function
     only carries out the choice.
+
+    movement_only=True replays ONLY the held W/A/S/D/Space keys - no clicks, number
+    keys or mouse path. For a recording that is purely a walk (Boss Rush's gate walks):
+    any click or cursor movement the recorder happened to capture around it (focusing
+    the game, pressing Stop) would otherwise be replayed and steer the camera.
 
     Returns True on a completed timeline, False if cancelled/missing/empty, or
     "RECONNECTED" if a disconnect was detected and resolved mid-playback - caller
@@ -62,7 +78,19 @@ def play_preset(location_key, variant_key, preset_name, skip_movement=False):
 
     print(f"[Player] Loaded {len(actions)} actions. Starting playback...")
     start_time = time.time() - time_shift
-    last_disconnect_check = 0.0
+    # Seeded from start_time, not 0.0: with 0.0, `now - last_disconnect_check` is
+    # always huge on the very first loop tick, so the check below used to fire
+    # immediately and unconditionally before a single action had played - instead
+    # of waiting its intended 1s like every later tick. On a fast PC that first,
+    # un-throttled chain of screenshot + template matches costs ~100ms, lost in the
+    # noise. On old/slow hardware it can cost several real seconds (confirmed live:
+    # logs_laptop/macro_slop.log 2026-09-20 01:33:24-28, four seconds of consecutive
+    # [vision] lines before the first action fired at all) - and because the wait
+    # loop below only compares against real elapsed time, that stall alone pushes
+    # `time.time() - start_time` past EVERY remaining action's target, so they all
+    # fire back-to-back the instant the check returns. A multi-second recorded walk
+    # then plays as one instant flick - "does .5s of movement and stops".
+    last_disconnect_check = start_time
     lobby_ticks = 0  # consecutive once-a-second checks that found the lobby (see poll_until's lobby_grace)
     held_movement = set()
 
@@ -91,6 +119,12 @@ def play_preset(location_key, variant_key, preset_name, skip_movement=False):
             for action in actions:
                 if skip_movement and action["type"] in ("keydown", "keyup"):
                     continue
+                if movement_only and action["type"] not in ("keydown", "keyup"):
+                    continue
+                if action["type"] in ("move", "click") and _outside_game(action["pos"]):
+                    print(f"[Player] Skipping a recorded {action['type']} outside the game window at "
+                          f"{tuple(action['pos'])} (the click that stopped the recording).")
+                    continue
 
                 target_time = action["time"]
 
@@ -113,7 +147,7 @@ def play_preset(location_key, variant_key, preset_name, skip_movement=False):
                     now = time.time()
                     in_walk_window = walk_start is not None and walk_start <= (now - start_time) <= walk_end
                     if now - last_disconnect_check >= 1.0 and not held_movement and not in_walk_window:
-                        last_disconnect_check = now
+                        check_started = now
                         current_shot = capture_screen()
                         dismiss_click_anywhere_if_present(current_shot)
                         handle_game_results_if_present(current_shot)
@@ -142,6 +176,18 @@ def play_preset(location_key, variant_key, preset_name, skip_movement=False):
                             config.STOP_REQUESTED = True
                             config.STUCK_DETECTED = "ROBLOX CLOSED"
                             return False
+
+                        # This check (screenshot + several template matches) can itself take
+                        # anywhere from ~10ms to several real seconds depending on the
+                        # machine - and it isn't a wait FOR anything, so that time must not
+                        # count against the recorded schedule. Without this, a slow check
+                        # pushes `time.time() - start_time` past every action still ahead of
+                        # it, and they all fire back-to-back the moment this returns instead
+                        # of at their recorded gaps (see the note on last_disconnect_check's
+                        # seed above for the confirmed-live symptom this caused).
+                        now = time.time()
+                        start_time += now - check_started
+                        last_disconnect_check = now
 
                     time.sleep(0.01)
 
@@ -349,6 +395,14 @@ def match_already_started(shot=None):
     shot lets a caller reuse a screenshot it already has; otherwise one is captured.
     """
     shot = capture_screen() if shot is None else shot
+    # The Start Game button only exists BEFORE the match begins, so while it is on screen
+    # the answer is no - whatever the wave counter looks like. Without this, the wave-zero
+    # check below decided "already started" on every screen whose HUD it doesn't match
+    # (measured: 0.45 on Expedition frames with Start Game plainly showing; a tester's
+    # Challenges run did the same), and Challenges then skipped Start Game entirely after
+    # switching Auto Play on - nothing else ever started the match.
+    if find_template(shot, config.START_GAME_BTN, config.MATCH_THRESHOLD, debug_label="start_game_btn"):
+        return False
     if find_template(shot, config.GAME_STARTED_TEXT, config.MATCH_THRESHOLD, debug_label="game_started"):
         return True
     return find_template(shot, config.WAVE_ZERO_TEXT, config.MATCH_THRESHOLD, debug_label="wave_zero") is None

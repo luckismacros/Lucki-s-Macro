@@ -118,7 +118,7 @@ class PresetPicker(StepCard):
                                    "W/A/S/D (Space to jump) before you start placing - the walk is saved as part "
                                    "of this same recording, and only replays again once you reach a different "
                                    "stage. Press F8 again when you're done.")
-        self.record_btn.clicked.connect(lambda: self.host.toggle_recording())
+        self.record_btn.clicked.connect(lambda: self.host.toggle_recording(self))
         actions.addWidget(self.record_btn, 1)
         self.edit_btn = Button("Edit", "subtle", icon="edit", height=32, font_px=12)
         self.edit_btn.setToolTip("See every step and every spot, move spots, delete mistakes")
@@ -275,7 +275,7 @@ class PresetPicker(StepCard):
         name = self.recording_name()
         if name:
             loc, var = self.slot()
-            self.host.open_editor(loc, var, name)
+            self.host.open_editor(loc, var, name, self)
 
     def _more_menu(self):
         menu = QMenu(self)
@@ -1133,6 +1133,111 @@ class ExpeditionsPage(ModePage):
         super().restore(data)
 
 
+# ----------------------------------------------------------------------------- boss rush
+
+class BossRushPage(ModePage):
+    """
+    Always the same map, 6 fixed gates then a boss - so unlike every other page there's
+    no map/act/difficulty to pick, just the macros: one PresetPicker per gate's walk
+    (the hub resets to the same spot every time, so each gate needs its own recorded
+    path there) plus one for the gate fight and one for the boss fight, both reused
+    across all 6 gates and every cycle. No Auto Play in this mode at all - see
+    modules/bossrush.py.
+    """
+    key = "bossrush"
+    runs_unit = "cycle"
+    runs_unit_hint = "One cycle is all 6 gates plus the boss."
+
+    def __init__(self, host):
+        super().__init__(host)
+        c1 = self.add_card(StepCard(1, "Boss Rush"))
+        c1.body.addWidget(label("Always the same map and 6 gates, then the boss - clears them in "
+                                 "any order and repeats. There's no Auto Play here, so every fight "
+                                 "below needs its own recorded macro, and each gate needs its own "
+                                 "walk from the hub.", "hint", wrap=True))
+        c1.set_done(True)
+
+        self.gate_picker = self.add_card(PresetPicker(host, 2, "Gate macro", self._gate_slot,
+                                                       allow_auto=False, trailing_text="needed here"))
+        self.boss_picker = self.add_card(PresetPicker(host, 3, "Boss macro", self._boss_slot,
+                                                       allow_auto=False, trailing_text="needed here"))
+
+        self.walk_pickers = {}
+        for gate_number in range(1, config.BOSSRUSH_TOTAL_GATES + 1):
+            picker = self.add_card(PresetPicker(
+                host, 3 + gate_number, f"Gate {gate_number} walk",
+                (lambda n=gate_number: self._walk_slot(n)), allow_auto=False, trailing_text="walk only"))
+            self.walk_pickers[gate_number] = picker
+
+        for picker in (self.gate_picker, self.boss_picker, *self.walk_pickers.values()):
+            picker.changed.connect(self.emit_changed)
+
+        self.finish()
+
+    def _gate_slot(self):
+        return config.BOSSRUSH_PRESET_LOCATION, config.BOSSRUSH_GATE_VARIANT
+
+    def _boss_slot(self):
+        return config.BOSSRUSH_PRESET_LOCATION, config.BOSSRUSH_BOSS_VARIANT
+
+    def _walk_slot(self, gate_number):
+        return config.BOSSRUSH_PRESET_LOCATION, config.bossrush_walk_variant(gate_number)
+
+    def _all_pickers(self):
+        return (self.gate_picker, self.boss_picker, *self.walk_pickers.values())
+
+    def on_shown(self):
+        # Base ModePage.on_shown() only refreshes self.picker - None here, since this
+        # page has 8 pickers rather than one - so it's overridden to refresh all of them.
+        for picker in self._all_pickers():
+            picker.refresh_list(force=True)
+
+    def checks(self):
+        rows = [("Gate macro", *self.gate_picker.check()), ("Boss macro", *self.boss_picker.check())]
+        for gate_number, picker in self.walk_pickers.items():
+            state, detail = picker.check()
+            rows.append((f"Gate {gate_number} walk", state, detail))
+        return rows
+
+    def _require(self, picker, what):
+        name = picker.recording_name()
+        if not name:
+            raise ValueError(f"Record the {what} first: click New on it, then Record (F8) in Roblox.")
+        loc, var = picker.slot()
+        if not preset_core.load_actions(loc, var, name):
+            raise ValueError(f"The {what} recording '{pretty(name)}' has no steps yet. "
+                             f"Press Record (F8) in Roblox first.")
+        return name
+
+    def run_spec(self):
+        gate_name = self._require(self.gate_picker, "gate macro")
+        boss_name = self._require(self.boss_picker, "boss macro")
+        walk_names = {n: self._require(p, f"gate {n} walk") for n, p in self.walk_pickers.items()}
+        fields = [("Gamemode", "Boss Rush"), ("Gate macro", gate_name), ("Boss macro", boss_name)]
+        return "run_boss_rush", (gate_name, boss_name, walk_names), fields
+
+    def summary(self):
+        return f"Boss Rush - gate '{pretty(self.gate_picker.recording_name())}', boss '{pretty(self.boss_picker.recording_name())}'"
+
+    def state(self):
+        return {
+            "gate": self.gate_picker.state(),
+            "boss": self.boss_picker.state(),
+            "walks": {str(n): p.state() for n, p in self.walk_pickers.items()},
+        }
+
+    def restore(self, data):
+        if "gate" in data:
+            self.gate_picker.restore(data["gate"])
+        if "boss" in data:
+            self.boss_picker.restore(data["boss"])
+        walks = data.get("walks", {})
+        for n, picker in self.walk_pickers.items():
+            saved = walks.get(str(n))
+            if saved:
+                picker.restore(saved)
+
+
 class OthersPage(ModePage):
     key = "others"
 
@@ -1301,6 +1406,6 @@ class QueuePage(ModePage):
 
 PAGE_CLASSES = {
     "story": StoryPage, "raids": RaidsPage, "challenges": ChallengesPage,
-    "portals": PortalsPage, "expeditions": ExpeditionsPage, "others": OthersPage,
-    "queue": QueuePage,
+    "portals": PortalsPage, "expeditions": ExpeditionsPage, "bossrush": BossRushPage,
+    "others": OthersPage, "queue": QueuePage,
 }
