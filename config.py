@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "1.17"
+APP_VERSION = "2"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -46,6 +46,13 @@ TEMPLATE_THRESHOLDS = {
     # both. Replace with a crop taken at 1600x900 (tools/template_capture.py) and this
     # entry can go.
     "assets/templates/bossrush/bossrush_card.png": 0.55,
+
+    # Flaming Monastery's title crop was captured from a 1919-wide window (1.2x too big;
+    # its letters were 31px tall against 25px for the other maps') and rescaled by
+    # 1600/1919, so shrunk text scores lower than a true 1600x900 capture. Its worst
+    # look-alike among the other map titles is 0.49. Re-capture it with
+    # tools/template_capture.py while pinned and this entry can go.
+    "assets/templates/story/map_flaming_monastery.png": 0.60,
 
     # More Boss Rush crops rescaled from the 1919-wide capture (same shrunk-text penalty).
     # pick_card: measured 0.79 live while on screen, <= 0.22 on every other frame.
@@ -939,6 +946,9 @@ PORTALS = {
     "skyruins":  {"label": "Sky Ruin's Portal",     "enabled": True, "search": "Sky"},
     "sovereign": {"label": "Sovereign Portal",      "enabled": True, "search": "Sov"},
     "lightning": {"label": "Lightning God's Portal","enabled": True, "search": "Lig"},
+    # Auto Play only, like Sky Ruin's - no fishing walk (see PORTAL_WALK_CATEGORIES in gui.py
+    # / PORTAL_FISH_CATEGORIES in ui_qt/pages.py, which list only the portals that fish).
+    "infernal":  {"label": "Infernal Portal",       "enabled": True, "search": "Inf"},
 }
 
 # Fishing
@@ -1058,6 +1068,7 @@ MAPS = {
     "kings_tomb":        {"label": "King's Tomb",       "enabled": True, "template": "assets/templates/story/map_kings_tomb.png", "acts": _default_acts()},
     "east_town":         {"label": "East Town",         "enabled": True, "template": "assets/templates/story/map_east_town.png", "acts": _default_acts()},
     "crimson_shore":     {"label": "Crimson Shore",     "enabled": True, "template": "assets/templates/story/map_crimson_shore.png", "acts": _default_acts()},
+    "flaming_monastery": {"label": "Flaming Monastery", "enabled": True, "template": "assets/templates/story/map_flaming_monastery.png", "acts": _default_acts()},
 }
 
 # The linear campaign order Auto Next climbs through: Act 1-5 of one map, then Act 1
