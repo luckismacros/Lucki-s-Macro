@@ -53,7 +53,8 @@ def _wait_and_click(template_path, step_name, clicks=1, recover_leftover_party=F
 # Any one of these being on screen means the mode-card chooser is already up - see
 # click_play()'s own tolerance for reaching it a different way (Change Gamemode,
 # from the run queue - see modules/lobby.return_to_lobby()) below.
-_MODE_CARD_TEMPLATES = (config.STORY_CARD, config.RAID_CARD, config.CHALLENGE_CARD, config.EXPEDITIONS_CARD)
+_MODE_CARD_TEMPLATES = (config.STORY_CARD, config.RAID_CARD, config.CHALLENGE_CARD, config.EXPEDITIONS_CARD,
+                        config.BOSSRUSH_CARD)
 
 
 def click_play():

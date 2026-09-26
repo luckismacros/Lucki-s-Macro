@@ -29,6 +29,7 @@ _MODE_CARD = {
     "raids": "RAID_CARD",
     "challenges": "CHALLENGE_CARD",
     "expeditions": "EXPEDITIONS_CARD",
+    "bossrush": "BOSSRUSH_CARD",
 }
 
 

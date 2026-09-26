@@ -45,7 +45,8 @@ from .widgets import (
 
 NAV = [
     ("story", "Story", "story"), ("raids", "Raids", "raids"), ("challenges", "Challenges", "challenges"),
-    ("portals", "Portals", "portals"), ("expeditions", "Expeditions", "expeditions"), ("queue", "Queue", "list"),
+    ("portals", "Portals", "portals"), ("expeditions", "Expeditions", "expeditions"),
+    ("bossrush", "Boss Rush", "bossrush"), ("queue", "Queue", "list"),
     ("others", "Others", "others"),
 ]
 SIDEBAR_WIDTH = 320
@@ -1026,7 +1027,14 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ recording
 
-    def toggle_recording(self):
+    def toggle_recording(self, picker=None):
+        """
+        picker: which PresetPicker to record into. Every page but Boss Rush has
+        exactly one (page.picker), which is why this used to be inferred from the
+        page alone - Boss Rush has 8 (gate, boss, 6 walks), so each one's Record
+        button now passes itself explicitly instead of relying on a page-level
+        singleton that a multi-picker page has no single value for.
+        """
         rec = self.recorder
         if rec.is_recording:
             rec.stop_recording()
@@ -1035,10 +1043,11 @@ class MainWindow(QMainWindow):
             self.toast("The bot is running", "Stop it before recording.", "warning")
             return
         page = self.current_page()
-        picker = page.picker
+        picker = picker or page.picker
         if picker is None or picker.uses_auto() or not picker.recording_name():
             self.toast("Pick a recording first", "Switch to My recording and click New to make one.", "warning")
             return
+        self._active_picker = picker
         picker.sync_recorder()
         rec.start_recording()
         if not self.dock_state.docked:
@@ -1049,7 +1058,7 @@ class MainWindow(QMainWindow):
         recording = rec.is_recording
         if recording != self._was_recording:
             self._was_recording = recording
-            picker = self.current_page().picker
+            picker = getattr(self, "_active_picker", None) or self.current_page().picker
             if picker is not None:
                 picker.set_recording(recording)
             if recording:
@@ -1067,6 +1076,7 @@ class MainWindow(QMainWindow):
                 self.toast("Recording saved", f"{n} actions. Open Edit to check every spot.", "success")
                 if picker is not None:
                     picker.refresh_list(force=True)
+                self._active_picker = None
                 if self._reopen_editor:
                     args, self._reopen_editor = self._reopen_editor, None
                     QTimer.singleShot(300, lambda: self.open_editor(*args))
@@ -1102,7 +1112,7 @@ class MainWindow(QMainWindow):
         if accepted and not self.engine.running:
             self.nav.select(dlg.chosen_mode, emit=True)
 
-    def open_editor(self, loc, var, name):
+    def open_editor(self, loc, var, name, picker=None):
         if self.engine.running:
             self.toast("The bot is running", "Stop it before editing a recording.", "warning")
             return
@@ -1118,13 +1128,13 @@ class MainWindow(QMainWindow):
             context = ""
         dlg = UnitPlacementEditor(self, loc, var, name, context, pix)
         result = dlg.exec()
-        picker = self.current_page().picker
+        picker = picker or self.current_page().picker
         if picker is not None:
             picker.refresh_list(force=True)
         self.refresh_ready()
         if result == RESULT_RECORD:
             self._reopen_editor = (loc, var, name)
-            self.toggle_recording()
+            self.toggle_recording(picker)
         elif result == RESULT_TEST:
             self.test_preset(loc, var, name)
 

@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "1.16.1"
+APP_VERSION = "1.17"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -39,6 +39,25 @@ TEMPLATE_THRESHOLDS = {
     # present and absent is enormous and 0.78 sits safely in the middle: well clear of
     # the lowest real sighting, nowhere near a false positive.
     "assets/templates/challenge_card.png": 0.78,
+
+    # Boss Rush card, rescaled down from a 1919-wide capture (see BOSSRUSH_DIR): shrunk
+    # text can't score like a same-size capture (see tools/retemplate.py). Measured live
+    # 2026-09-26: 0.63-0.68 while on screen, 0.25-0.30 when absent, so 0.55 sits clear of
+    # both. Replace with a crop taken at 1600x900 (tools/template_capture.py) and this
+    # entry can go.
+    "assets/templates/bossrush/bossrush_card.png": 0.55,
+
+    # More Boss Rush crops rescaled from the 1919-wide capture (same shrunk-text penalty).
+    # pick_card: measured 0.79 live while on screen, <= 0.22 on every other frame.
+    # continue: <= 0.43 on every frame without it. gate: the label text is generic, so it
+    # gets a higher bar (0.63 seen on unrelated screens) and BossRushRunner._wait_for_hub
+    # falls back to a timed pause if it never clears it.
+    "assets/templates/bossrush/pick_card.png": 0.60,
+    "assets/templates/bossrush/continue.png": 0.65,
+    "assets/templates/bossrush/gate.png": 0.72,
+    # enter_gate: the E prompt scored 0.68 live while plainly on screen on gate 2 (0.34-0.46
+    # on every frame without it). BossRushRunner._enter_gate also presses E blind if missed.
+    "assets/templates/bossrush/enter_gate.png": 0.60,
 
     # Story's difficulty buttons and the Act 1 tile were measured across every
     # reference screenshot in Images_For_Claude: present-but-not-selected they score
@@ -735,6 +754,7 @@ GAMEMODES = {
     "challenges":  {"label": "Challenges",  "enabled": True},
     "expeditions": {"label": "Expeditions", "enabled": True},
     "portals":     {"label": "Portals",     "enabled": True},
+    "bossrush":    {"label": "Boss Rush",   "enabled": True},
     "others":      {"label": "Others",      "enabled": False},
 }
 
@@ -1176,3 +1196,61 @@ EXPEDITION_STUCK_TIMEOUT = 1500.0
 # settings.json, so it can be changed without rebuilding. Re-record the unit macro
 # after changing it - the macro's clicks assume the camera it was recorded with.
 EXPEDITION_CAMERA_ZOOM_OUT_STEPS = 13
+
+
+# --- Boss Rush ---
+# Play -> Boss Rush card -> Select Stage -> Start -> Start Game -> the hub map with 6
+# gates. Clear all 6 (always the same map and units - see modules/bossrush.py's hotbar
+# check, the same one Expeditions uses, for why the unit macro only actually plays when
+# there's something left to place), each cleared gate returning to the same fixed hub
+# spot to pick another, until a final Start Game offers the boss fight - its own
+# separate macro. Beating the boss offers the common Repeat Stage button, then another
+# Start Game, which starts the 6 gates over from gate 1.
+#
+# No autoplay at all in this mode - every fight (gate or boss) is a recorded macro the
+# player makes themselves (F8 in-game). See modules/bossrush.py.
+BOSSRUSH_DIR = "assets/templates/bossrush"
+
+# Every crop in this folder must be at the bot's 1600x900 reference scale. The originals
+# were captured from a 1919x1079 window (1.2x too big, so nothing matched) and were
+# rescaled by 1600/1919; the untouched originals are in bossrush/_original_1919x1079/.
+# New crops: capture them with tools/template_capture.py while Roblox is pinned.
+BOSSRUSH_CARD = f"{BOSSRUSH_DIR}/bossrush_card.png"
+BOSSRUSH_MAP_TILE = f"{BOSSRUSH_DIR}/bossrush_template.png"    # the "Boss Rush - District 7" tile on the stage screen
+BOSSRUSH_SELECT_STAGE_BTN = f"{BOSSRUSH_DIR}/select_stage.png"
+BOSSRUSH_START_BTN = f"{BOSSRUSH_DIR}/start_button.png"       # the party screen's Start, before the run begins
+# Entering the hub, a gate, or the boss - the same green button every other mode uses, so
+# its proper 1600x900 capture is used rather than the rescaled crop in bossrush/ (which
+# scored only 0.24-0.45 live: shrunk text, see BOSSRUSH_DIR above).
+BOSSRUSH_START_GAME_BTN = START_GAME_BTN
+BOSSRUSH_ENTER_GATE_BTN = f"{BOSSRUSH_DIR}/enter_gate.png"
+BOSSRUSH_GATE = f"{BOSSRUSH_DIR}/gate.png"                    # the "Gate" labels over the hub - proof the hub has loaded
+BOSSRUSH_SELECT_CARD = f"{BOSSRUSH_DIR}/pick_card.png"       # "Pick Card / Select a card!" header (select_card.png is a full screenshot)
+BOSSRUSH_CONTINUE_BTN = f"{BOSSRUSH_DIR}/continue.png"
+
+# Gate-clear and boss macros are shared across all 6 gates / every cycle (same map,
+# same units every time) - one preset slot each, not one per gate:
+# presets/bossrush_gate_<name>.json, presets/bossrush_boss_<name>.json.
+#
+# Reaching a gate is a SEPARATE, walk-only preset per gate (the hub camera/position
+# resets to the same fixed spot after every gate clear, confirmed live 2026-09-26) -
+# its own preset slot too, one per gate: presets/bossrush_walk_gate{N}_<name>.json.
+# Each gate's slot is picked with the same New/Record widget as every other macro in
+# the app (see ui_qt/pages.py BossRushPage) rather than a hardcoded single recording,
+# so a user can keep more than one walk per gate if they ever want to.
+BOSSRUSH_PRESET_LOCATION = "bossrush"
+BOSSRUSH_GATE_VARIANT = "gate"
+BOSSRUSH_BOSS_VARIANT = "boss"
+BOSSRUSH_TOTAL_GATES = 6
+
+
+def bossrush_walk_variant(gate_number):
+    return f"walk_gate{gate_number}"
+
+# Boss Rush shares Expeditions' "Lvl" hotbar tag check (config.EXP_UNIT_LVL_TAG) rather
+# than needing its own crop - it's the same UI element in the same game.
+
+# Longest a single gate/boss fight may run with no recognised popup/button before it
+# counts as stuck. Same order of magnitude as Expeditions' defense nodes - a boss fight
+# especially could run long.
+BOSSRUSH_STUCK_TIMEOUT = 1500.0
