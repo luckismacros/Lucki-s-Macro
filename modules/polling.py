@@ -23,6 +23,7 @@ What poll_until() does on every tick, in order:
 
 Steps 8-10 are the ones no loop had before.
 """
+import os
 import time
 from collections import namedtuple
 
@@ -260,9 +261,16 @@ def poll_until(targets, interval, label, timeout=None, stuck_timeout=None,
             health.anti_idle_tick()
 
         if stuck.expired():
-            waiting_for = ", ".join(t.template for t in targets)
+            # Prefers each target's short debug_label ("bossrush_start_game") over its
+            # full template path - both were already computed for the local log/screenshot
+            # below, but only this one is short enough to read in a phone notification.
+            # Threading it into the STOP reason (instead of the bare "STUCK" this used to
+            # be) is what lets config.STUCK_DETECTED - and the Discord message and phase
+            # label built from it - say what was actually missing, not just that
+            # something was.
+            waiting_for = ", ".join(t.debug_label or os.path.basename(t.template) for t in targets)
             stuck.report(screenshot, extra=f"It was waiting for: {waiting_for}")
-            return _halt("STUCK")
+            return _halt(f"STUCK - waiting for {waiting_for}")
 
         time.sleep(interval)
         elapsed += interval

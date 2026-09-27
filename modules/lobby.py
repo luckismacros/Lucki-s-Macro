@@ -112,6 +112,23 @@ def return_to_lobby(timeout=60.0, log=print, next_mode=None):
             time.sleep(2.0)
             continue
 
+        # The Portals re-entry picker's own hard escape hatch - see config.BACK_TO_LOBBY_BTN
+        # for the confirmed in-game bug this exists for. Checked before BACK_BTN/CLOSE_BTN
+        # since neither of those is on this particular screen.
+        back_to_lobby = _find(shot, "BACK_TO_LOBBY_BTN")
+        if back_to_lobby:
+            log("Leaving the portal picker (Back to Lobby)...")
+            click_at(back_to_lobby[0], back_to_lobby[1])
+            time.sleep(1.5)
+            continue
+
+        return_to_lobby_confirm = _find(shot, "RETURN_TO_LOBBY_BTN")
+        if return_to_lobby_confirm:
+            log("Confirming Return to Lobby...")
+            click_at(return_to_lobby_confirm[0], return_to_lobby_confirm[1])
+            time.sleep(2.0)
+            continue
+
         # Leaving a Challenges pass that ended without playing anything (every
         # selected slot on cooldown) - can take one Back click (heading to a
         # non-Portals mode) or two in a row (heading to Portals) before the next

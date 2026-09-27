@@ -51,7 +51,7 @@ from modules.portal_reward import pick_portal_reward
 from modules.expedition import ExpeditionRunner
 from modules.bossrush import BossRushRunner
 from modules.stats import SESSION
-from modules import health, notify
+from modules import health, notify, lobby
 from modules.fishing import start_fishing
 from modules import preset_core
 
@@ -651,6 +651,12 @@ class BotEngine:
                                     break
                                 if outcome == "RECONNECTED":
                                     continue
+                                if outcome == "RECOVERED":
+                                    # Forced back to the real lobby - retry run_portal_flow()
+                                    # from there without counting it as a failed attempt, since
+                                    # this is the recovery working as intended, not a miss.
+                                    self.log("Forced back to the lobby - retrying from there...")
+                                    continue
 
                             nav_failures += 1
                             if nav_failures < PORTAL_NAV_MAX_ATTEMPTS:
@@ -1019,13 +1025,20 @@ class BotEngine:
                     need_full_navigation = True
                     is_repeat_match = False
                     continue
+                if outcome == "RECOVERED":
+                    self.log("Forced back to the lobby after the picker stopped responding - "
+                             "redoing full navigation...")
+                    need_full_navigation = True
+                    is_repeat_match = False
+                    continue
                 if outcome != "OK":
                     self.log(f"Still couldn't re-enter a {portal_label} after "
-                             f"{PORTAL_REENTER_MAX_ATTEMPTS} attempts - stopping. Check "
-                             f"{config.DEBUG_DIR} for the frame from each attempt: if the "
-                             f"button was visibly there every time, the template needs "
-                             f"recapturing (python tools/retemplate.py); if the screen looked "
-                             f"different from usual, that's the real cause to chase down.")
+                             f"{PORTAL_REENTER_MAX_ATTEMPTS} attempts, and couldn't force a way "
+                             f"back to the lobby either - stopping. Check {config.DEBUG_DIR} for "
+                             f"the frame from each attempt: if the button was visibly there every "
+                             f"time, the template needs recapturing (python tools/retemplate.py); "
+                             f"if the screen looked different from usual, that's the real cause to "
+                             f"chase down.")
                     # Without this the run reports as a clean, successful finish
                     # instead of the problem it actually is - same fix as the other
                     # dead ends in this file and MAX_CONSECUTIVE_DEFEATS.
@@ -1130,6 +1143,32 @@ class BotEngine:
                 continue
 
             return "OK"
+
+        # Every attempt above assumed the picker itself still works. A confirmed in-game
+        # bug (reported live 2026-09-27) can instead leave "Select Portal" doing nothing at
+        # all - the click registers but the picker never reopens, and the player is left on
+        # the Items panel with no button any attempt above recognises. Rather than give up
+        # here, force a hard reset back to the real lobby (the picker's own Back to Lobby ->
+        # Return to Lobby confirm - see modules.lobby.return_to_lobby()'s own checks) and let
+        # the caller redo a full fresh navigation from there, the same as a RECONNECTED result.
+        self.log(f"Still stuck after {PORTAL_REENTER_MAX_ATTEMPTS} attempts - forcing a return "
+                 f"to the lobby to recover...")
+        notify.problem(
+            "Portal picker stopped responding",
+            f"\"Select Portal\" did nothing for {PORTAL_REENTER_MAX_ATTEMPTS} attempts in a row - "
+            f"a known in-game bug, not a template/config issue. Forcing a hard reset: closing the "
+            f"picker and confirming Return to Lobby, then re-entering fresh.",
+        )
+        recovered = lobby.return_to_lobby(timeout=45.0, log=self.log, next_mode="portals")
+        notify.problem(
+            "Portal picker recovered" if recovered else "Could not recover the portal picker",
+            ("Back at the lobby - resuming from here." if recovered else
+             "The hard reset couldn't find its way back to the lobby either - stopping the run."),
+            image_bytes=None if recovered else health.jpg_bytes(),
+            recovered=recovered,
+        )
+        if recovered:
+            return "RECOVERED"
         return None
 
     def run_challenges(self, sequence, slot_links, give_up_if_nothing_playable=False):

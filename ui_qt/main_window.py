@@ -1146,7 +1146,11 @@ class MainWindow(QMainWindow):
             "lifecycle": self.user_settings.get("notify_run_lifecycle", True),
             "problems": self.user_settings.get("notify_problems", True),
             "milestones": self.user_settings.get("notify_milestones", True),
-            "match": self.user_settings.get("notify_every_match", False),
+            # Was "match" - didn't match the "every_match" category every send() call
+            # and the _EMOJI table actually use, so this toggle never took effect at
+            # all: _categories.get("every_match", True) always fell through to its own
+            # default (True) since the key it was actually looking for was never set.
+            "every_match": self.user_settings.get("notify_every_match", False),
         })
         self.refresh_ready()
 

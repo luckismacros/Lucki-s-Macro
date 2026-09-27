@@ -809,7 +809,9 @@ class BotGUI(ctk.CTk):
             "lifecycle": self.user_settings.get("notify_run_lifecycle", True),
             "problems": self.user_settings.get("notify_problems", True),
             "milestones": self.user_settings.get("notify_milestones", True),
-            "match": self.user_settings.get("notify_every_match", False),
+            # Was "match" - see the identical fix's comment in ui_qt/main_window.py's
+            # apply_notification_settings().
+            "every_match": self.user_settings.get("notify_every_match", False),
         })
 
     def _open_settings_dialog(self):

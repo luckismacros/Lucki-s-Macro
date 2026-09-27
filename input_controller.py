@@ -1019,44 +1019,62 @@ def anchor_camera(zoom_out_steps=None):
     macro recorded relative to it, which reads as the walk itself being imprecise
     when the actual cause is the camera never finishing this reset.
     """
-    time.sleep(1.0 * config.SLOWNESS)
+    # high_res_timer() tightens time.sleep()'s ~15.6ms Windows scheduler tick down to
+    # ~1-2ms for this whole sequence - see its own docstring in this file. Without it,
+    # each of these notches/pulses is a separate short wait that can run long on a
+    # slower machine, and a scroll notch that lands late enough to bunch up with its
+    # neighbour is a scroll notch Roblox can coalesce into one - measured live
+    # (2026-09-27): a tester's zoom-out stopped halfway and needed a manual scroll to
+    # finish, the same "fewer of the sent events actually registered" symptom the
+    # WASD walk timing bug in modules/stage_player.py turned out to be.
+    with high_res_timer():
+        time.sleep(1.0 * config.SLOWNESS)
 
-    # 1. Zoom in close to reset distance drift. Deliberately stops just short of a full
-    #    zero-distance zoom - going fully to 0 tends to force Roblox into first-person mode,
-    #    which has no pitch clamp and can flip/spin the camera during step 2 below.
-    for _ in range(config.CAMERA_ZOOM_IN_STEPS):
-        _native_scroll(120)
-        time.sleep(0.015 * config.SLOWNESS)
+        # 1. Zoom in close to reset distance drift. Deliberately stops just short of a full
+        #    zero-distance zoom - going fully to 0 tends to force Roblox into first-person mode,
+        #    which has no pitch clamp and can flip/spin the camera during step 2 below. Never
+        #    padded with extra notches for that reason - unlike step 3's zoom-out, overshooting
+        #    here is not safe.
+        for _ in range(config.CAMERA_ZOOM_IN_STEPS):
+            _native_scroll(120)
+            time.sleep(0.015 * config.SLOWNESS)
 
-    time.sleep(0.5 * config.SLOWNESS)
+        time.sleep(0.5 * config.SLOWNESS)
 
-    # 2. Angle camera Top-Down (raw relative drag, 0 horizontal drift).
-    #    Deliberately does NOT teleport the cursor first (no moveTo/absolute jump): once
-    #    zoomed in close, Roblox's camera can start following raw mouse position directly,
-    #    so any absolute repositioning here gets read as a spurious look/rotate before the
-    #    intentional drag even begins. Dragging from wherever the cursor already is avoids that.
-    #    Wrapped so the button is released no matter what: an exception thrown between
-    #    the mouseDown and the mouseUp would otherwise leave right-mouse held down, and
-    #    in Roblox that means the camera keeps following the cursor and every later click
-    #    is swallowed - a broken state that survives until the user clicks manually.
-    pydirectinput.mouseDown(button='right')
-    try:
-        time.sleep(0.1 * config.SLOWNESS)
+        # 2. Angle camera Top-Down (raw relative drag, 0 horizontal drift).
+        #    Deliberately does NOT teleport the cursor first (no moveTo/absolute jump): once
+        #    zoomed in close, Roblox's camera can start following raw mouse position directly,
+        #    so any absolute repositioning here gets read as a spurious look/rotate before the
+        #    intentional drag even begins. Dragging from wherever the cursor already is avoids that.
+        #    Wrapped so the button is released no matter what: an exception thrown between
+        #    the mouseDown and the mouseUp would otherwise leave right-mouse held down, and
+        #    in Roblox that means the camera keeps following the cursor and every later click
+        #    is swallowed - a broken state that survives until the user clicks manually.
+        pydirectinput.mouseDown(button='right')
+        try:
+            time.sleep(0.1 * config.SLOWNESS)
 
-        for _ in range(config.CAMERA_PITCH_STEPS):
-            win32api.mouse_event(win32con.MOUSEEVENTF_MOVE, 0, config.CAMERA_PITCH_STEP_SIZE, 0, 0)
-            time.sleep(0.02 * config.SLOWNESS)
+            for _ in range(config.CAMERA_PITCH_STEPS):
+                win32api.mouse_event(win32con.MOUSEEVENTF_MOVE, 0, config.CAMERA_PITCH_STEP_SIZE, 0, 0)
+                time.sleep(0.02 * config.SLOWNESS)
 
-        time.sleep(0.1 * config.SLOWNESS)
-    finally:
-        pydirectinput.mouseUp(button='right')
-    time.sleep(0.5 * config.SLOWNESS)
+            time.sleep(0.1 * config.SLOWNESS)
+        finally:
+            pydirectinput.mouseUp(button='right')
+        time.sleep(0.5 * config.SLOWNESS)
 
-    # 3. Zoom all the way OUT (Scroll DOWN) to max distance
-    steps = config.CAMERA_ZOOM_OUT_STEPS if zoom_out_steps is None else max(0, int(zoom_out_steps))
-    for _ in range(steps):
-        _native_scroll(-120)
-        time.sleep(0.015 * config.SLOWNESS)
+        # 3. Zoom all the way OUT (Scroll DOWN) to max distance. Padded with a few extra
+        #    notches past the requested count: max camera distance is a hard clamp (see
+        #    config.CAMERA_ZOOM_OUT_STEPS), so a notch sent after the clamp is reached is a
+        #    harmless no-op, while a notch that got dropped/coalesced (the failure this is
+        #    guarding against) leaves the camera under-zoomed for the rest of the run. Only
+        #    step 3 gets this margin - step 1 has the documented first-person-flip risk above.
+        steps = config.CAMERA_ZOOM_OUT_STEPS if zoom_out_steps is None else max(0, int(zoom_out_steps))
+        if steps > 0:
+            steps += config.CAMERA_ZOOM_OUT_OVERSHOOT_STEPS
+        for _ in range(steps):
+            _native_scroll(-120)
+            time.sleep(0.015 * config.SLOWNESS)
 
-    mark_input()
-    time.sleep(0.5)
+        mark_input()
+        time.sleep(0.5)

@@ -147,6 +147,35 @@ def send(text, category="lifecycle", title=None, good=None, fields=None,
         return False
 
 
+def problem(title, why, detail=None, fields=None, image_bytes=None, recovered=None):
+    """
+    A "problems"-category message that always leads with WHY, not just what.
+
+    Plain send() leaves it up to each call site to remember to explain itself, which
+    is how the run could previously report a bare "STUCK" or silently retry something
+    three times with nothing said either way. This is the shape every problem message
+    should have instead: a title short enough for a notification banner, one or two
+    plain sentences of why it matters and what's being done about it, and optionally
+    more technical detail underneath for whoever opens the message.
+
+    title      short embed title, e.g. "Portal picker stopped responding".
+    why        one or two sentences: what happened and what's being done about it.
+               Always the first thing shown - this is the part a phone banner has to
+               make legible without opening the app.
+    detail     optional extra line(s) of technical detail (a count, a template name) -
+               for the part worth opening the message to read, not the headline.
+    fields     see send()'s own `fields` param.
+    image_bytes see send()'s own `image_bytes` param.
+    recovered  True once a problem is confirmed resolved, False while it's still
+               ongoing or failed outright, None for a heads-up that isn't clearly
+               either - tints the message and picks its emoji the same way send()'s
+               own `good` param does.
+    """
+    body = why if not detail else f"{why}\n{detail}"
+    return send(body, category="problems", title=title, good=recovered,
+               fields=fields, image_bytes=image_bytes)
+
+
 def flush(timeout=6.0):
     """Waits briefly for queued messages to go out, for use on shutdown."""
     if _queue is None:
