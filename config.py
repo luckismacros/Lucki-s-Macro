@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "2"
+APP_VERSION = "2.1"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -733,6 +733,16 @@ CLOSE_BTN = "assets/templates/close.png"
 # next queue step's own entry point. Same run-queue-only scope as CLOSE_BTN above.
 BACK_BTN = "assets/templates/back.png"
 
+# The Portals re-entry picker's own hard escape hatch: a small icon that leaves the
+# picker outright, followed by a "Return to Lobby" confirmation. Added for a confirmed
+# in-game bug (reported live 2026-09-27): clicking "Select Portal" (PORTAL_SELECT_BTN)
+# can silently do nothing and leave the player stuck on the Items panel instead of
+# reopening the picker - none of BACK_BTN/CLOSE_BTN/DISBAND_BTN above are on that
+# screen, so modules.lobby.return_to_lobby() couldn't get out of it until these two
+# were added to its own checks. See engine.BotEngine._reenter_portal().
+BACK_TO_LOBBY_BTN = "assets/templates/back_to_lobby.png"
+RETURN_TO_LOBBY_BTN = "assets/templates/return_to_lobby.png"
+
 # "View Party" - one of the buttons on a challenge's own victory screen (alongside
 # Repeat Stage / Select Portal / Leave, depending on gamemode). Confirmed live: this
 # is what actually gets off that screen towards Change Gamemode, no separate Exit or
@@ -1043,6 +1053,13 @@ CAMERA_ZOOM_IN_STEPS = 28    # scroll-up notches; kept just short of forcing fir
 CAMERA_PITCH_STEPS = 15      # number of right-drag pitch pulses
 CAMERA_PITCH_STEP_SIZE = 30  # mickeys per pulse; lower = less risk of overshooting past top-down
 CAMERA_ZOOM_OUT_STEPS = 30   # scroll-down notches to reach max camera distance
+
+# Extra scroll-down notches sent past CAMERA_ZOOM_OUT_STEPS (and past any custom
+# zoom_out_steps a caller passes) as a safety margin against dropped/coalesced scroll
+# events on a slow machine - see anchor_camera()'s own comment. Zoom-out has a hard
+# max-distance clamp, so overshooting it is a no-op; undershooting it is the bug this
+# exists to prevent (a tester's camera stopped half zoomed-out, confirmed live 2026-09-27).
+CAMERA_ZOOM_OUT_OVERSHOOT_STEPS = 6
 
 def _default_acts():
     """Returns a fresh acts dict so each map owns its own copy (not a shared reference)."""

@@ -11,9 +11,30 @@ spent recovering rather than farming.
 A module-level SESSION instance exists so code that is nowhere near the GUI can
 record an event without having a reference plumbed through to it - reconnect.py
 counting a recovered disconnect being the case that would otherwise have needed
-threading a stats object through nine call sites in three modules.
+threading a stats object through nine call sites in three modules. victory()/defeat()
+notifying Discord (see MILESTONE_EVERY_N_MATCHES below) is the same shape of fix for
+the same reason: every gamemode already calls these two methods, so a notification
+added here reaches all of them for free instead of needing its own call site bolted
+onto Story/Raids/Portals/Expeditions/Challenges/Boss Rush individually.
 """
 import time
+
+from modules import notify, health
+
+# Every match result gets a message when the user's turned "Every match result" on in
+# Settings (off by default - it says "Very chatty" for a reason). Text-only, no
+# screenshot: this runs on every single match across every mode, and a capture+JPEG
+# encode on that hot a path is a cost every other notification in this app avoids by
+# only paying it for genuinely rare events.
+_EVERY_MATCH_CATEGORY = "every_match"
+
+# A round-number match count is a real, honest "still alive and here's the pace"
+# signal for an unattended overnight run, without needing any new vision/OCR work to
+# track something game-specific. Rare enough (a farming session runs for hours) that
+# this never competes with "every_match" for the same audience - someone who wants a
+# message per match already gets one; this is for someone who doesn't but still wants
+# a heartbeat.
+MILESTONE_EVERY_N_MATCHES = 50
 
 
 def format_duration(seconds):
@@ -59,6 +80,17 @@ class SessionStats:
     def match_started(self):
         self.matches += 1
         self._match_started_at = time.time()
+        # Checked here rather than in victory()/defeat(): a match that ends in a
+        # disconnect calls neither, which would silently skip a round number that
+        # happened to land on that one. Counting the match as it STARTS means every
+        # multiple of MILESTONE_EVERY_N_MATCHES is hit exactly once, whatever that
+        # particular match's own outcome turns out to be.
+        if MILESTONE_EVERY_N_MATCHES and self.matches % MILESTONE_EVERY_N_MATCHES == 0:
+            notify.send(
+                f"{self.matches} matches in, {format_duration(self.elapsed)} elapsed - still going.",
+                category="milestones", title="Still farming", good=True,
+                fields=self.notify_fields(), image_bytes=health.jpg_bytes(),
+            )
 
     def _end_match(self):
         if self._match_started_at is not None:
@@ -68,10 +100,24 @@ class SessionStats:
     def victory(self):
         self.victories += 1
         self._end_match()
+        self._notify_match_result(True)
 
     def defeat(self):
         self.defeats += 1
         self._end_match()
+        self._notify_match_result(False)
+
+    def _notify_match_result(self, won):
+        """
+        Gated by the "Every match result" Settings toggle (off by default - see
+        modules.notify's own category gating in send()), so this is a silent no-op for
+        everyone who hasn't explicitly opted into it.
+        """
+        notify.send(
+            f"{'Victory' if won else 'Defeat'} - match #{self.matches} "
+            f"({self.victories}W / {self.defeats}L so far).",
+            category=_EVERY_MATCH_CATEGORY, title="Match result", good=won,
+        )
 
     def disconnect(self):
         self.disconnects += 1
