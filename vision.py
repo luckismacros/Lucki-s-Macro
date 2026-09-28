@@ -2,11 +2,16 @@
 """
 Screen capture and template matching utilities.
 """
+import time
+
 import mss
+import mss.exception
 import numpy as np
 import os
 import cv2
 import config
+
+CAPTURE_RETRY_SECONDS = 60.0
 
 _alpha_warned = set()
 _template_cache = {}
@@ -36,21 +41,38 @@ def capture_screen(region=None):
             been pinned yet (the offline tools, and the very first capture at
             startup, before config.CLIENT_SIZE is set).
     """
-    with mss.mss() as sct:
-        if region:
-            monitor = region
-        elif config.CLIENT_SIZE is not None:
-            monitor = {
-                "left": config.CLIENT_ORIGIN[0],
-                "top": config.CLIENT_ORIGIN[1],
-                "width": config.CLIENT_SIZE[0],
-                "height": config.CLIENT_SIZE[1],
-            }
-        else:
-            monitor = sct.monitors[1]
-        shot = sct.grab(monitor)
-        img = np.array(shot)  # BGRA
-        return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+    # Windows refuses screen capture outright ("BitBlt: Access is denied") while the
+    # secure desktop is up - a UAC prompt, Ctrl+Alt+Del, the lock screen - and briefly
+    # around display changes. That used to crash the whole run on the spot (a tester,
+    # 2026-09-27, mid "Waiting for map"). It's transient, so it's waited out: retried
+    # for up to CAPTURE_RETRY_SECONDS before it's allowed to count as a real crash.
+    deadline = time.time() + CAPTURE_RETRY_SECONDS
+    warned = False
+    while True:
+        try:
+            with mss.mss() as sct:
+                if region:
+                    monitor = region
+                elif config.CLIENT_SIZE is not None:
+                    monitor = {
+                        "left": config.CLIENT_ORIGIN[0],
+                        "top": config.CLIENT_ORIGIN[1],
+                        "width": config.CLIENT_SIZE[0],
+                        "height": config.CLIENT_SIZE[1],
+                    }
+                else:
+                    monitor = sct.monitors[1]
+                shot = sct.grab(monitor)
+                img = np.array(shot)  # BGRA
+                return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+        except mss.exception.ScreenShotError as e:
+            if time.time() >= deadline or config.STOP_REQUESTED:
+                raise
+            if not warned:
+                warned = True
+                print(f"[vision] Screen capture refused by Windows ({e}) - a UAC prompt or the lock "
+                      f"screen? Retrying for up to {CAPTURE_RETRY_SECONDS:.0f}s...")
+            time.sleep(1.0)
 
 def native_variant_path(template_path):
     """

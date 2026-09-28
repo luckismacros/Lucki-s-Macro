@@ -60,6 +60,11 @@ from modules import expedition_map, health
 # every checkpoint by one. This is only the outer bound for that memory.
 SAME_POPUP_SECONDS = 60.0
 
+# Debug screenshots of Continue popups, per kind ("start"/"checkpoint"/"encounter"),
+# per session - see _handle_continue_popup().
+POPUP_DEBUG_MAX_PER_KIND = 3
+_popup_debug_saved = {}
+
 # Hotbar unit check (see the module docstring). Measured: unit cards 1.00 on the full
 # bar and on a 2-card bar, 0.71 live with the older single-size search; no unit cards
 # 0.45 on the empty bar and <= 0.52 on the bottom of every map screen.
@@ -424,7 +429,14 @@ class ExpeditionRunner:
         if result in ("RECONNECTED", False):
             return result
         if result == "TIMEOUT":
-            print(f"[Expedition] No second '{name}' button appeared - the run loop will click it if it shows up late.")
+            key = f"no_confirm_after_{name}"
+            path = None
+            if _popup_debug_saved.get(key, 0) < POPUP_DEBUG_MAX_PER_KIND:
+                _popup_debug_saved[key] = _popup_debug_saved.get(key, 0) + 1
+                path = health.save_debug_screenshot(f"expedition_{key}")
+            print(f"[Expedition] No second '{name}' button appeared"
+                  + (f" (screen saved: {path})" if path else "")
+                  + " - the run loop will click it if it shows up late.")
         else:
             confirm = _find(confirm_template)
             if confirm is None or click_until_gone(confirm_template, confirm, f"expedition_after_{name}"):
@@ -447,10 +459,11 @@ class ExpeditionRunner:
         if not cont:
             return True
         extract = _find(config.EXP_EXTRACT_BTN, shot)
-        encounter = _find(config.EXP_ENCOUNTER_SIGNAL, shot)
+        encounter = _find(config.EXP_ENCOUNTER_SIGNAL, shot) or _find(config.EXP_ENCOUNTER_BAR, shot)
         now = time.time()
 
-        if self._last_popup_kind and now - self._last_popup_at < SAME_POPUP_SECONDS:
+        same_popup = bool(self._last_popup_kind and now - self._last_popup_at < SAME_POPUP_SECONDS)
+        if same_popup:
             kind = self._last_popup_kind          # same popup as a moment ago - don't recount
         elif self.start_popup_pending:
             self.start_popup_pending = False
@@ -461,6 +474,20 @@ class ExpeditionRunner:
         else:
             kind = "encounter"
         self._last_popup_kind, self._last_popup_at = kind, now
+
+        # What each popup was read as, and why - an encounter that got stuck (reported
+        # 2026-09-28, no log of it) can't be diagnosed without this. The first few of
+        # each kind also save the screen.
+        if not same_popup:
+            path = None
+            if _popup_debug_saved.get(kind, 0) < POPUP_DEBUG_MAX_PER_KIND:
+                _popup_debug_saved[kind] = _popup_debug_saved.get(kind, 0) + 1
+                path = health.save_debug_screenshot(f"expedition_popup_{kind}")
+            print(f"[Expedition] Continue popup read as '{kind}' (Extract button: {'yes' if extract else 'no'}, "
+                  f"encounter signal: {'yes' if encounter else 'no'})"
+                  + (f" - screen saved: {path}" if path else "") + ".")
+        else:
+            print(f"[Expedition] Same '{kind}' popup still up - pressing Continue again.")
 
         if kind == "checkpoint" and extract and self.checkpoints >= config.EXPEDITION_EXTRACT_AT_CHECKPOINT:
             print(f"[Expedition] Checkpoint {self.checkpoints} - extracting.")

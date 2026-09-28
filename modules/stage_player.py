@@ -1,5 +1,6 @@
 # modules/stage_player.py
 import json
+import os
 import time
 import pydirectinput
 from input_controller import click_at, move_mouse_to, mark_input, high_res_timer
@@ -21,6 +22,14 @@ def _outside_game(pos):
     """
     x, y = pos
     return x < 0 or y < 0 or x > config.REFERENCE_WIDTH or y > config.REFERENCE_HEIGHT
+
+
+def _has_playable(actions, movement_only=False):
+    """True if at least one action would actually be played back (see play_preset)."""
+    if movement_only:
+        return any(a.get("type") == "keydown" for a in actions)
+    return any(a.get("type") in ("key", "keydown") or
+               (a.get("type") == "click" and not _outside_game(a["pos"])) for a in actions)
 
 
 def play_preset(location_key, variant_key, preset_name, skip_movement=False, movement_only=False):
@@ -58,9 +67,24 @@ def play_preset(location_key, variant_key, preset_name, skip_movement=False, mov
         return False
 
     actions = data.get("actions", [])
-    if not actions:
-        print("[Player] Preset is empty.")
-        return False
+    if not _has_playable(actions, movement_only):
+        # Only out-of-game clicks (the one that stopped the recording) or nothing at all.
+        # Played, this "succeeds" having done nothing, so the caller carries on into a
+        # fight with no units. A shipped starter recording of the same name, if there
+        # is one, is the best stand-in - see stage_recorder.stop_recording() for how a
+        # tester's gate macro got wiped this way.
+        default_file = os.path.join("assets", "default_presets", os.path.basename(filename))
+        try:
+            with open(default_file, "r") as f:
+                default_actions = json.load(f).get("actions", [])
+        except (OSError, ValueError):
+            default_actions = []
+        if not _has_playable(default_actions, movement_only):
+            print(f"[Player] Preset {filename} is empty - nothing in it to play.")
+            return False
+        print(f"[Player] Preset {filename} has nothing in it to play - using the shipped starter "
+              f"recording of the same name instead. Re-record it (F8) to use your own.")
+        actions = default_actions
 
     # Skipping the walk means skipping the TIME it took too: the first key/click
     # after it was recorded at (say) t=8.4s because 8.4s of walking came first, and

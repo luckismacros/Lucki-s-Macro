@@ -1072,8 +1072,13 @@ class MainWindow(QMainWindow):
                 if getattr(self, "_rec_bar", None) is not None:
                     self._rec_bar.hide()
                 n = len(rec.actions)
-                self.log(f"Recording saved: {n} action{'s' if n != 1 else ''}.")
-                self.toast("Recording saved", f"{n} actions. Open Edit to check every spot.", "success")
+                if getattr(rec, "last_save_skipped", False):
+                    self.log("Nothing was recorded - your existing recording was kept as it was.")
+                    self.toast("Nothing recorded", "No unit keys, clicks or walking were captured, "
+                               "so your existing recording was kept.", "warning")
+                else:
+                    self.log(f"Recording saved: {n} action{'s' if n != 1 else ''}.")
+                    self.toast("Recording saved", f"{n} actions. Open Edit to check every spot.", "success")
                 if picker is not None:
                     picker.refresh_list(force=True)
                 self._active_picker = None

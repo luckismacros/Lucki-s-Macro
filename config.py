@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "2.1"
+APP_VERSION = "2.2"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -57,14 +57,19 @@ TEMPLATE_THRESHOLDS = {
     # More Boss Rush crops rescaled from the 1919-wide capture (same shrunk-text penalty).
     # pick_card: measured 0.79 live while on screen, <= 0.22 on every other frame.
     # continue: <= 0.43 on every frame without it. gate: the label text is generic, so it
-    # gets a higher bar (0.63 seen on unrelated screens) and BossRushRunner._wait_for_hub
-    # falls back to a timed pause if it never clears it.
+    # gets a higher bar (0.63 seen on unrelated screens). No longer used to detect the
+    # hub: the labels grow as the camera gets closer, so they only match once anchored -
+    # BOSSRUSH_MAP_HUD does that job now.
     "assets/templates/bossrush/pick_card.png": 0.60,
     "assets/templates/bossrush/continue.png": 0.65,
     "assets/templates/bossrush/gate.png": 0.72,
     # enter_gate: the E prompt scored 0.68 live while plainly on screen on gate 2 (0.34-0.46
     # on every frame without it). BossRushRunner._enter_gate also presses E blind if missed.
     "assets/templates/bossrush/enter_gate.png": 0.60,
+    # crimson_captain: the boss's HUD nameplate at the top of the hub. Measured 2026-09-28:
+    # 0.74 on a tester's real hub frame (even after two lossy rescales of that screenshot),
+    # <= 0.34 on all 48 other screenshots in the repo (lobby, menus, stages, results).
+    "assets/templates/bossrush/crimson_captain.png": 0.60,
 
     # Story's difficulty buttons and the Act 1 tile were measured across every
     # reference screenshot in Images_For_Claude: present-but-not-selected they score
@@ -1139,6 +1144,14 @@ EXP_AFTER_EXTRACT_BTN = f"{EXPEDITION_DIR}/After_Extract.png"
 EXP_REPEAT_STAGE_BTN = f"{EXPEDITION_DIR}/Repeat_Stage.png"
 EXP_SELECT_UPGRADE_TEXT = f"{EXPEDITION_DIR}/Select_An_Upgrade.png"
 EXP_ENCOUNTER_SIGNAL = f"{EXPEDITION_DIR}/Encounter_Signal.png"
+# A second "this popup is an encounter" signal: the small "!" icon on the encounter bar
+# (2026-09-28). Captured at 1919 wide and rescaled by 1600/1919 (originals in
+# encounters/_original_1919x1079/). Kept at the default strict bar on purpose: this small
+# icon scored up to 0.68 on unrelated screens, and a false hit would make a real
+# checkpoint read as an encounter (so it never extracts). The encounter's own buttons
+# in that folder turned out to be the same buttons as EXP_CONTINUE_BTN /
+# EXP_AFTER_CONTINUE_BTN (0.96 / 0.87 once rescaled), so those two still do the clicking.
+EXP_ENCOUNTER_BAR = f"{EXPEDITION_DIR}/encounters/encounter_bar.png"
 # The "Lvl" tag every unit card in the hotbar carries, whatever the unit - cropped from
 # Full_Units_Bar.png. Found = units are still waiting to be placed. See
 # modules/expedition.py (_units_in_bar) for how it is searched and the measured scores.
@@ -1252,9 +1265,19 @@ BOSSRUSH_START_BTN = f"{BOSSRUSH_DIR}/start_button.png"       # the party screen
 # scored only 0.24-0.45 live: shrunk text, see BOSSRUSH_DIR above).
 BOSSRUSH_START_GAME_BTN = START_GAME_BTN
 BOSSRUSH_ENTER_GATE_BTN = f"{BOSSRUSH_DIR}/enter_gate.png"
-BOSSRUSH_GATE = f"{BOSSRUSH_DIR}/gate.png"                    # the "Gate" labels over the hub - proof the hub has loaded
+BOSSRUSH_GATE = f"{BOSSRUSH_DIR}/gate.png"                    # the "Gate" labels over the hub (camera-dependent size - unused)
 BOSSRUSH_SELECT_CARD = f"{BOSSRUSH_DIR}/pick_card.png"       # "Pick Card / Select a card!" header (select_card.png is a full screenshot)
 BOSSRUSH_CONTINUE_BTN = f"{BOSSRUSH_DIR}/continue.png"
+# The "Crimson Captain" boss nameplate in the hub's HUD. HUD, not a label in the world,
+# so unlike BOSSRUSH_GATE it's the same size whatever the camera is doing - it's what
+# proves "we're on the Boss Rush map" before the camera has been anchored. Needed
+# because the hub's Start Game button doesn't always show: a tester's hub (2026-09-27)
+# had none at all (most likely the game's own Auto Start setting took it), and the
+# bot, waiting only for that button, sat there until it timed out.
+BOSSRUSH_MAP_HUD = f"{BOSSRUSH_DIR}/crimson_captain.png"
+# Once the hub HUD is up, how long Start Game still gets to appear before the run
+# carries on without it (Auto Start mode - see BossRushRunner._enter_hub).
+BOSSRUSH_START_GAME_GRACE = 12.0
 
 # Gate-clear and boss macros are shared across all 6 gates / every cycle (same map,
 # same units every time) - one preset slot each, not one per gate:
