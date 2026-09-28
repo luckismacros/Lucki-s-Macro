@@ -10,6 +10,7 @@ class StageRecorder:
     def __init__(self, f7_callback=None, autoclicker_callback=None,
                  start_stop_key="f7", record_key="f8", autoclicker_key="f9"):
         self.is_recording = False
+        self.last_save_skipped = False   # the last stop_recording() had nothing to save
         self.start_time = 0.0
         self.actions = []
         self.current_location = "school_grounds"
@@ -173,6 +174,7 @@ class StageRecorder:
             return
 
         self.is_recording = True
+        self.last_save_skipped = False
         self.start_time = time.time()
         self.actions = []
         self.last_key = None
@@ -193,6 +195,23 @@ class StageRecorder:
             self.actions.append({"time": end_time, "type": "keyup", "key": key})
         self.held_movement = set()
         filename = f"presets/{self.current_location}_{self.current_variant}_{self.preset_name}.json"
+
+        # Clicks outside the game are the ones that stopped the recording (the recording
+        # bar's Stop, or the macro window beside Roblox) - playback skips them anyway.
+        # With only those left there's nothing to play, and saving would wipe the
+        # recording already in this slot: a tester (2026-09-27) hit F8 by accident right
+        # after stopping the bot, clicked Stop 2s later, and the shipped Boss Rush gate
+        # macro was replaced by that single stray click, leaving it with no units to place.
+        def outside_game(pos):
+            # Same rule as stage_player._outside_game().
+            return pos[0] < 0 or pos[1] < 0 or pos[0] > config.REFERENCE_WIDTH or pos[1] > config.REFERENCE_HEIGHT
+        self.actions = [a for a in self.actions
+                        if not (a["type"] == "click" and outside_game(a["pos"]))]
+        self.last_save_skipped = not any(a["type"] in ("key", "click", "keydown") for a in self.actions)
+        if self.last_save_skipped:
+            print(f"\n[StageRecorder] Nothing was recorded (no unit keys, clicks in the game or walking) - "
+                  f"kept the existing {filename} as it was.")
+            return
 
         with open(filename, 'w') as f:
             json.dump({

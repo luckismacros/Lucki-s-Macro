@@ -150,6 +150,9 @@ class BossRushRunner:
         self.walk_preset_names = walk_preset_names
         self.set_phase = set_phase
         self.consecutive_defeats = 0
+        # True once the hub loaded WITHOUT a Start Game button (see _enter_hub): the
+        # game's own Auto Start is taking those clicks, so gates won't show one either.
+        self.auto_start = False
 
     def _phase(self, text, color="#4fc3f7"):
         if self.set_phase:
@@ -171,6 +174,19 @@ class BossRushRunner:
 
     # --- navigation ------------------------------------------------------------------
     def navigate(self):
+        # Already on the Boss Rush map (the run was stopped and started again, or Never
+        # Stop restarted it after a problem): there's no Play button to find from here,
+        # which is exactly how a tester's restarts failed (2026-09-27, "click_play
+        # TIMEOUT" twice while standing in the hub). Pick up from the hub instead.
+        shot = capture_screen()
+        if _find(config.REPEAT_STAGE_BTN, shot):
+            print("[BossRush] Already on the boss's Repeat Stage screen - repeating from there.")
+            return self.click_repeat_if_present()
+        if _find(config.BOSSRUSH_MAP_HUD, shot) or _find(config.BOSSRUSH_START_GAME_BTN, shot):
+            print("[BossRush] Already on the Boss Rush map - skipping the menus. (If some gates were "
+                  "already cleared this cycle, the walks start again from gate 1.)")
+            return self._enter_hub()
+
         self._phase("NAVIGATING MENUS")
         print("[BossRush] Navigating to Boss Rush...")
         result = run_bossrush_menu_flow()
@@ -180,21 +196,37 @@ class BossRushRunner:
 
     def _enter_hub(self):
         """
-        Map loads showing Start Game -> fix the camera -> THEN click Start Game. The
-        camera goes first so the recorded walks and macros line up with what they were
-        recorded against. Used after the party screen and after Repeat Stage.
+        Map loads -> fix the camera -> THEN click Start Game. The camera goes first so
+        the recorded walks and macros line up with what they were recorded against.
+        Used after the party screen, after Repeat Stage, and when a run starts on the map.
+
+        "Loaded" is Start Game OR the hub's HUD (config.BOSSRUSH_MAP_HUD). Start Game on
+        its own isn't enough: with the game's own Auto Start setting on, the hub never
+        shows it - a tester's bot (2026-09-27) sat on "Waiting for map" on a fully loaded
+        hub until it timed out, every time, and never got as far as the camera or a walk.
+        The HUD is a screen overlay, so it matches whatever the camera is doing.
         """
         self._phase("WAITING FOR MAP")
-        print("[BossRush] Waiting for the map to load (Start Game button)...")
-        result = poll_until([target(config.BOSSRUSH_START_GAME_BTN, True, debug_label="bossrush_map_loaded")],
+        print("[BossRush] Waiting for the map to load (Start Game button or the hub's HUD)...")
+        result = poll_until([target(config.BOSSRUSH_START_GAME_BTN, "START_GAME", debug_label="bossrush_map_loaded"),
+                             target(config.BOSSRUSH_MAP_HUD, "HUD", debug_label="bossrush_map_hud")],
                             interval=1.0, label="bossrush_map_loaded", timeout=90.0,
                             stuck_timeout=None, lobby_grace=25.0)
         if result == "TIMEOUT":
-            path = health.save_debug_screenshot("bossrush_start_game_not_found")
-            print(f"[BossRush] Start Game never appeared (screen saved: {path}).")
+            path = health.save_debug_screenshot("bossrush_map_not_loaded")
+            print(f"[BossRush] Neither Start Game nor the Boss Rush HUD appeared (screen saved: {path}).")
             return False
-        if result is not True:
+        if result in (False, "RECONNECTED"):
             return result
+
+        if result == "HUD":
+            # The HUD can beat the button onto the screen - give it a moment first.
+            wait = poll_until([target(config.BOSSRUSH_START_GAME_BTN, "START_GAME", debug_label="bossrush_hub_start_game")],
+                              interval=0.5, label="bossrush_hub_start_game",
+                              timeout=config.BOSSRUSH_START_GAME_GRACE, stuck_timeout=None)
+            if wait in (False, "RECONNECTED"):
+                return wait
+            result = "START_GAME" if wait == "START_GAME" else "HUD"
 
         if config.STOP_REQUESTED:
             return False
@@ -203,11 +235,44 @@ class BossRushRunner:
         anchor_camera()
         time.sleep(0.5)
 
-        self._phase("STARTING RUN")
-        result = self._click_start_game(timeout=15.0)
-        if result is not True:
-            return result
+        # One more look after the camera move, whichever way the map was recognised.
+        match = _find(config.BOSSRUSH_START_GAME_BTN)
+        if match:
+            self.auto_start = False
+            self._phase("STARTING RUN")
+            if not click_until_gone(config.BOSSRUSH_START_GAME_BTN, match, "bossrush_start_game", clicks=2):
+                if config.STOP_REQUESTED:
+                    return False
+        elif result == "START_GAME":
+            # It was there before the camera moved and is gone now - clicked by Auto Start.
+            self.auto_start = True
+            print("[BossRush] Start Game went away by itself - the game's Auto Start is on.")
+        else:
+            self.auto_start = True
+            path = health.save_debug_screenshot("bossrush_hub_without_start_game")
+            print(f"[BossRush] (screen saved: {path})")
+            print(f"[BossRush] The hub has loaded with no Start Game button after "
+                  f"{config.BOSSRUSH_START_GAME_GRACE:.0f}s - the game's own Auto Start is on, "
+                  f"carrying on without it (gates won't show one either).")
         time.sleep(1.0)
+        return True
+
+    def _wait_for_hub_return(self):
+        """
+        After a gate: waits for the hub's HUD before the next walk starts, instead of a
+        fixed pause only. A walk that begins while the teleport back is still going
+        starts from the wrong spot (or with the character frozen for its first second),
+        and ends short of the gate - one cause of "the walk isn't precise". Never fails
+        the run: after 20s it just carries on as before.
+        """
+        result = poll_until([target(config.BOSSRUSH_MAP_HUD, True, debug_label="bossrush_hub_return")],
+                            interval=0.5, label="bossrush_hub_return", timeout=20.0, stuck_timeout=None)
+        if result in (False, "RECONNECTED"):
+            return result
+        if result == "TIMEOUT":
+            print("[BossRush] Didn't see the hub's HUD within 20s after the gate - carrying on.")
+        # The HUD shows up with the hub; the character needs a moment more to land.
+        time.sleep(1.5)
         return True
 
     def _walk_to_gate(self, gate_number):
@@ -256,22 +321,66 @@ class BossRushRunner:
             else:
                 print(f"[BossRush] Enter Gate prompt not recognised - pressed E anyway (attempt {attempt}).")
 
-            loaded = poll_until([target(config.BOSSRUSH_START_GAME_BTN, True, debug_label="bossrush_gate_loaded")],
-                                interval=0.5, label="bossrush_gate_loaded", timeout=12.0, stuck_timeout=None)
-            if loaded in (False, "RECONNECTED"):
-                return loaded
-            if loaded is True:
-                return True
+            if self.auto_start:
+                entered = self._entered_without_start_game(prompt_seen=bool(match))
+                if entered is not None:
+                    return entered
+            else:
+                loaded = poll_until([target(config.BOSSRUSH_START_GAME_BTN, True, debug_label="bossrush_gate_loaded")],
+                                    interval=0.5, label="bossrush_gate_loaded", timeout=12.0, stuck_timeout=None)
+                if loaded in (False, "RECONNECTED"):
+                    return loaded
+                if loaded is True:
+                    return True
             print("[BossRush] The gate didn't open - trying E again.")
 
         path = health.save_debug_screenshot("bossrush_could_not_enter_gate")
         print(f"[BossRush] Couldn't get into the gate after 4 tries (screen saved: {path}).")
         return _halt("BOSS RUSH COULD NOT ENTER GATE")
 
-    def _wait_for_start_game(self, timeout=30.0):
-        """Waits (without clicking) until the Start Game button is up. True / False / "RECONNECTED"."""
+    def _entered_without_start_game(self, prompt_seen):
+        """
+        Auto Start mode's version of "did the gate open?": no Start Game will ever come
+        to prove it, so a Start Game is still taken if one shows, and otherwise the
+        Enter Gate prompt having gone (and staying gone) is the proof - it only exists
+        while standing at a closed gate. True = entered, None = not yet (retry E),
+        False / "RECONNECTED" as usual.
+        """
+        gone_since = None
+        deadline = time.time() + 8.0
+        while time.time() < deadline:
+            if config.STOP_REQUESTED:
+                return False
+            shot = capture_screen()
+            if _find(config.BOSSRUSH_START_GAME_BTN, shot):
+                return True
+            if _find(config.BOSSRUSH_ENTER_GATE_BTN, shot):
+                gone_since = None
+            elif gone_since is None:
+                gone_since = time.time()
+            elif time.time() - gone_since >= 2.0:
+                if not prompt_seen:
+                    print("[BossRush] Enter Gate prompt wasn't recognised before E, and isn't there now - "
+                          "assuming the gate opened.")
+                return True
+            time.sleep(0.4)
+        return None
+
+    def _wait_for_start_game(self, timeout=30.0, auto_start_timeout=5.0):
+        """
+        Waits (without clicking) until the Start Game button is up. True / False / "RECONNECTED".
+
+        In Auto Start mode (see _enter_hub) the button isn't expected at all: the wait is
+        cut to auto_start_timeout and not seeing it is True, not a failure - the fight has
+        already begun on its own.
+        """
+        if self.auto_start:
+            timeout = min(timeout, auto_start_timeout)
         result = poll_until([target(config.BOSSRUSH_START_GAME_BTN, True, debug_label="bossrush_start_game")],
                             interval=0.5, label="bossrush_start_game", timeout=timeout, stuck_timeout=None)
+        if result == "TIMEOUT" and self.auto_start:
+            print("[BossRush] No Start Game here (the game's Auto Start is on) - carrying on.")
+            return True
         if result == "TIMEOUT":
             # "TIMEOUT" is a truthy string, so returning it would read as success further
             # up and the run would carry on into a match that never started.
@@ -356,9 +465,9 @@ class BossRushRunner:
 
         if gate_number == 1:
             # No Continue choice after the first gate: the player is already back at the
-            # gate selection, so the next walk can start after a short settle.
+            # gate selection, so the next walk can start once the hub is really back.
             time.sleep(2.5)
-            return True
+            return self._wait_for_hub_return()
 
         # Gates 2-6: Continue first, then the teleport back (or, after gate 6, to the boss).
         time.sleep(1.0)
@@ -366,7 +475,9 @@ class BossRushRunner:
         if result is not True:
             return result
         time.sleep(3.0)
-        return True
+        if gate_number == config.BOSSRUSH_TOTAL_GATES:
+            return True          # off to the boss, not back to the hub
+        return self._wait_for_hub_return()
 
     # --- the boss ------------------------------------------------------------------------
     def fight_boss(self):
@@ -380,7 +491,9 @@ class BossRushRunner:
         self._phase("BOSS", "#c62828")
         print("[BossRush] All gates cleared - fighting the boss.")
 
-        result = self._wait_for_start_game(timeout=60.0)
+        # Auto Start gets longer here than at a gate: the trip to the boss is a real teleport,
+        # and units placed before it lands would go down in the hub.
+        result = self._wait_for_start_game(timeout=60.0, auto_start_timeout=8.0)
         if result is not True:
             return result
         result = self._place_units(config.BOSSRUSH_BOSS_VARIANT, self.boss_preset_name)
