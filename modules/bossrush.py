@@ -255,17 +255,42 @@ class BossRushRunner:
         # Stage in Boss Rush) lands - reported live 2026-09-29, the run then sat there
         # until it failed. Both are default-threshold and score <= 0.62 on the hub and on
         # Start Game, so they can't be confused with either.
+        #
+        # 2026-09-29 (the user's own PC): the click meant for Repeat Stage randomly opens View
+        # Party instead, and the run sat on that screen. Back is the way out of it: it lands
+        # on the results screen again, and Repeat Stage is then clicked from there. Back is
+        # listed before Start / Select Stage so a party screen that also shows those is left
+        # by Back rather than started from.
         party_clicks = 0
         while True:
             result = poll_until([target(config.BOSSRUSH_START_GAME_BTN, "START_GAME", debug_label="bossrush_map_loaded"),
                                  target(config.BOSSRUSH_MAP_HUD, "HUD", debug_label="bossrush_map_hud"),
+                                 target(config.BACK_BTN, "BACK", debug_label="bossrush_back"),
+                                 target(config.REPEAT_STAGE_BTN, "RESULTS", debug_label="bossrush_results_repeat"),
                                  target(config.BOSSRUSH_START_BTN, "PARTY_START", debug_label="bossrush_party_start"),
                                  target(config.BOSSRUSH_SELECT_STAGE_BTN, "PARTY_SELECT", debug_label="bossrush_party_select")],
                                 interval=1.0, label="bossrush_map_loaded", timeout=90.0,
                                 stuck_timeout=None, lobby_grace=25.0)
-            if result not in ("PARTY_START", "PARTY_SELECT") or party_clicks >= 4:
+            if result not in ("BACK", "RESULTS", "PARTY_START", "PARTY_SELECT") or party_clicks >= 6:
                 break
             party_clicks += 1
+            time.sleep(0.5)                    # let a popping-in screen settle before clicking
+            if result == "BACK":
+                match = _find(config.BACK_BTN)
+                if match:
+                    print("[BossRush] On the party screen (View Party got clicked) - clicking Back.")
+                    click_until_gone(config.BACK_BTN, match, "bossrush_back")
+                time.sleep(1.5)
+                continue
+            if result == "RESULTS":
+                # Back on the results screen (or still on it): Repeat Stage is the click that
+                # was wanted in the first place.
+                match = _find(config.REPEAT_STAGE_BTN)
+                if match:
+                    print("[BossRush] On the results screen - clicking Repeat Stage.")
+                    click_until_gone(config.REPEAT_STAGE_BTN, match, "bossrush_repeat", clicks=1)
+                time.sleep(1.5)
+                continue
             template = config.BOSSRUSH_START_BTN if result == "PARTY_START" else config.BOSSRUSH_SELECT_STAGE_BTN
             match = _find(template)
             if match:
@@ -273,9 +298,10 @@ class BossRushRunner:
                       f"{'Start' if result == 'PARTY_START' else 'Select Stage'} to get back in.")
                 click_until_gone(template, match, f"bossrush_{result.lower()}")
             time.sleep(1.0)
-        if result in ("PARTY_START", "PARTY_SELECT"):
+        if result in ("BACK", "RESULTS", "PARTY_START", "PARTY_SELECT"):
             path = health.save_debug_screenshot("bossrush_stuck_on_party_screen")
-            print(f"[BossRush] Still on the party screen after {party_clicks} clicks (screen saved: {path}).")
+            print(f"[BossRush] Still on the party/results screen after {party_clicks} clicks "
+                  f"(screen saved: {path}).")
             return False
         if result == "TIMEOUT":
             path = health.save_debug_screenshot("bossrush_map_not_loaded")
@@ -406,6 +432,12 @@ class BossRushRunner:
         # closes in), so none visible on the hub means the camera has drifted - and a
         # walk replayed under a drifted camera goes somewhere else. Fixed before walking.
         shot = capture_screen()
+        if self._settings_open(shot):
+            # A Settings panel left open (it sometimes ignores being closed) covers the
+            # middle of the screen and swallows the walk's keys - closed first.
+            print("[BossRush] The Settings panel is open - closing it before the walk.")
+            self._close_settings()
+            shot = capture_screen()
         if _find(config.BOSSRUSH_MAP_HUD, shot) and not self._gate_labels(shot):
             print("[BossRush] No gate labels visible - the camera has moved. Re-anchoring it before the walk.")
             self._phase("ANCHORING CAMERA")
@@ -833,24 +865,45 @@ class BossRushRunner:
             return result
         return _find(config.TELEPORT_SPAWN_BTN) if result is True else None
 
-    def _close_settings(self):
+    @staticmethod
+    def _settings_close_button(shot):
         """
-        Closes the Settings panel with its own red X (the gear looks different while the
-        panel is open, so it can't be relied on to toggle it). The X is only accepted near
-        where that panel draws it - other panels have identical X buttons.
+        The Settings panel's red X if it's on screen: either close crop (the panel's own,
+        and the generic close.png), accepted only near where that panel draws it - other
+        panels have identical X buttons elsewhere.
         """
-        for _ in range(3):
+        for template in (config.SETTINGS_CLOSE_BTN, config.CLOSE_SETTINGS_BTN, config.CLOSE_BTN):
+            close = _find(template, shot)
+            if close and abs(close[0] - 1316) < 45 and abs(close[1] - 167) < 45:
+                return close
+        return None
+
+    def _settings_open(self, shot):
+        return bool(_find(config.TELEPORT_SPAWN_BTN, shot) or _find(config.SETTINGS_SEARCH_BAR, shot)
+                    or self._settings_close_button(shot))
+
+    def _close_settings(self, attempts=5):
+        """
+        Closes the Settings panel with its red X (the gear looks different while the panel
+        is open, so it can't be relied on to toggle it). The game sometimes ignores a click
+        on it and leaves the panel up (seen live 2026-09-29), so it is looked at again after
+        every click and clicked again for as long as it is there.
+        """
+        for attempt in range(1, attempts + 1):
             shot = capture_screen()
-            if not _find(config.TELEPORT_SPAWN_BTN, shot):
+            if not self._settings_open(shot):
                 return True
-            close = _find(config.SETTINGS_CLOSE_BTN, shot)
-            if close and abs(close[0] - 1316) < 40 and abs(close[1] - 167) < 40:
-                click_at(close[0], close[1])
-            else:
-                click_at(1316, 167)
-            time.sleep(0.8)
-        print("[BossRush] The settings menu may still be open.")
-        return False
+            close = self._settings_close_button(shot)
+            x, y = (close[0], close[1]) if close else (1316, 167)
+            if attempt > 1:
+                print(f"[BossRush] The settings panel is still open - clicking its X again ({attempt}/{attempts}).")
+            click_at(x, y)
+            time.sleep(1.0)
+        if self._settings_open(capture_screen()):
+            path = health.save_debug_screenshot("bossrush_settings_wont_close")
+            print(f"[BossRush] The settings panel won't close (screen saved: {path}).")
+            return False
+        return True
 
     def _entered_without_start_game(self, prompt_seen):
         """

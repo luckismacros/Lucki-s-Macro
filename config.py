@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "2.5"
+APP_VERSION = "2.6"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -79,6 +79,7 @@ TEMPLATE_THRESHOLDS = {
     "assets/templates/settings.png": 0.85,
     "assets/templates/teleport_spawn.png": 0.85,
     "assets/templates/close_x.png": 0.85,
+    "assets/templates/close_settings.png": 0.55,
     "assets/templates/search_Bar.png": 0.85,
 
     # Story's difficulty buttons and the Act 1 tile were measured across every
@@ -1314,6 +1315,9 @@ BOSSRUSH_SEEK_START_SPEED = 150.0     # px/s guess for walking speed; measured a
 SETTINGS_BTN = "assets/templates/settings.png"
 TELEPORT_SPAWN_BTN = "assets/templates/teleport_spawn.png"
 SETTINGS_CLOSE_BTN = "assets/templates/close_x.png"
+# The user's own crop of the same X (bigger, with the panel's edge around it, so it scores
+# lower - 0.62 on a real frame, right position). Only ever accepted near (1316, 167).
+CLOSE_SETTINGS_BTN = "assets/templates/close_settings.png"
 # The panel's search box (empty state, "Search..."). Reset-to-spawn types "teleport" into it
 # so the Teleport To Spawn row is the first result wherever the list happens to be scrolled.
 SETTINGS_SEARCH_BAR = "assets/templates/search_Bar.png"
