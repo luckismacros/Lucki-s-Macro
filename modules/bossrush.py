@@ -186,6 +186,9 @@ class BossRushRunner:
             print("[BossRush] Already on the Boss Rush map - skipping the menus. (If some gates were "
                   "already cleared this cycle, the walks start again from gate 1.)")
             return self._enter_hub()
+        if _find(config.BOSSRUSH_START_BTN, shot):
+            print("[BossRush] Already on the party screen - starting from there.")
+            return self._enter_hub()        # clicks Start itself (see its party-screen handling)
 
         self._phase("NAVIGATING MENUS")
         print("[BossRush] Navigating to Boss Rush...")
@@ -208,10 +211,33 @@ class BossRushRunner:
         """
         self._phase("WAITING FOR MAP")
         print("[BossRush] Waiting for the map to load (Start Game button or the hub's HUD)...")
-        result = poll_until([target(config.BOSSRUSH_START_GAME_BTN, "START_GAME", debug_label="bossrush_map_loaded"),
-                             target(config.BOSSRUSH_MAP_HUD, "HUD", debug_label="bossrush_map_hud")],
-                            interval=1.0, label="bossrush_map_loaded", timeout=90.0,
-                            stuck_timeout=None, lobby_grace=25.0)
+        # The party screen's Select Stage / Start are watched for too, and clicked: that's
+        # where a stray click on the results screen's View Party (right next to Repeat
+        # Stage in Boss Rush) lands - reported live 2026-09-29, the run then sat there
+        # until it failed. Both are default-threshold and score <= 0.62 on the hub and on
+        # Start Game, so they can't be confused with either.
+        party_clicks = 0
+        while True:
+            result = poll_until([target(config.BOSSRUSH_START_GAME_BTN, "START_GAME", debug_label="bossrush_map_loaded"),
+                                 target(config.BOSSRUSH_MAP_HUD, "HUD", debug_label="bossrush_map_hud"),
+                                 target(config.BOSSRUSH_START_BTN, "PARTY_START", debug_label="bossrush_party_start"),
+                                 target(config.BOSSRUSH_SELECT_STAGE_BTN, "PARTY_SELECT", debug_label="bossrush_party_select")],
+                                interval=1.0, label="bossrush_map_loaded", timeout=90.0,
+                                stuck_timeout=None, lobby_grace=25.0)
+            if result not in ("PARTY_START", "PARTY_SELECT") or party_clicks >= 4:
+                break
+            party_clicks += 1
+            template = config.BOSSRUSH_START_BTN if result == "PARTY_START" else config.BOSSRUSH_SELECT_STAGE_BTN
+            match = _find(template)
+            if match:
+                print(f"[BossRush] On the party screen instead of the map - clicking "
+                      f"{'Start' if result == 'PARTY_START' else 'Select Stage'} to get back in.")
+                click_until_gone(template, match, f"bossrush_{result.lower()}")
+            time.sleep(1.0)
+        if result in ("PARTY_START", "PARTY_SELECT"):
+            path = health.save_debug_screenshot("bossrush_stuck_on_party_screen")
+            print(f"[BossRush] Still on the party screen after {party_clicks} clicks (screen saved: {path}).")
+            return False
         if result == "TIMEOUT":
             path = health.save_debug_screenshot("bossrush_map_not_loaded")
             print(f"[BossRush] Neither Start Game nor the Boss Rush HUD appeared (screen saved: {path}).")
@@ -447,7 +473,11 @@ class BossRushRunner:
         result = self._click_start_game()
         if result is not True:
             return result
-        SESSION.match_started()
+        # One run = 6 gates + the boss, so it's counted once: started at gate 1, and won or
+        # lost only at the boss (fight_boss). Counting every gate made one run read as 7
+        # wins - in the stats, Discord's per-match messages and milestones, and the run limit.
+        if gate_number == 1:
+            SESSION.match_started()
 
         self._phase("FIGHTING GATE", "#2e7d32")
         result = poll_until([target(config.BOSSRUSH_SELECT_CARD, True, debug_label="bossrush_select_card")],
@@ -461,7 +491,7 @@ class BossRushRunner:
             print("[BossRush] Gate cleared - picking a card (middle of the screen).")
             click_until_gone(config.BOSSRUSH_SELECT_CARD, match, "bossrush_select_card",
                              point=(config.REFERENCE_WIDTH // 2, config.REFERENCE_HEIGHT // 2))
-        SESSION.victory()
+        print(f"[BossRush] Gate {gate_number}/{config.BOSSRUSH_TOTAL_GATES} cleared.")
 
         if gate_number == 1:
             # No Continue choice after the first gate: the player is already back at the
@@ -486,7 +516,8 @@ class BossRushRunner:
         Stage itself (see click_repeat_if_present()) - leaving it on screen lets a
         stopped run be exited the normal way, the same reason modules/expedition.py's
         play_run() leaves its own Repeat Stage unclicked.
-        Returns "REPEAT" / False / "RECONNECTED".
+        Returns "REPEAT" / "RETRIED" (the game's Auto Retry already began the next run -
+        the hub's Start Game is up) / False / "RECONNECTED".
         """
         self._phase("BOSS", "#c62828")
         print("[BossRush] All gates cleared - fighting the boss.")
@@ -503,15 +534,27 @@ class BossRushRunner:
         result = self._click_start_game()
         if result is not True:
             return result
-        SESSION.match_started()
+        # Not SESSION.match_started() here - the run was already started at gate 1.
 
         self._phase("FIGHTING BOSS", "#c62828")
         result = poll_until(
             [target(config.VICTORY_TEXT, "VICTORY", debug_label="bossrush_victory"),
-             target(config.DEFEAT_TEXT, "DEFEAT", debug_label="bossrush_defeat")],
+             target(config.DEFEAT_TEXT, "DEFEAT", debug_label="bossrush_defeat"),
+             # The game's own Auto Retry can skip the result screen entirely and land
+             # straight back on the new run's hub (see the Repeat Stage wait below).
+             target(config.BOSSRUSH_START_GAME_BTN, "RETRIED", debug_label="bossrush_auto_retried")],
             interval=2.0, label="bossrush_boss_result", stuck_timeout=config.BOSSRUSH_STUCK_TIMEOUT)
         if result in (False, "RECONNECTED"):
             return result
+
+        if result == "RETRIED":
+            # Result screen never seen. Auto Retry only follows a finished run, so it's
+            # counted as a win - otherwise a run limit could never be reached this way.
+            self.consecutive_defeats = 0
+            SESSION.victory()
+            print("[BossRush] The game's Auto Retry already started the next run (no result screen "
+                  "seen) - counting this one as a win.")
+            return "RETRIED"
 
         if result == "DEFEAT":
             self.consecutive_defeats += 1
@@ -527,11 +570,14 @@ class BossRushRunner:
             SESSION.victory()
             print("[BossRush] Boss defeated.")
 
-        result = poll_until([target(config.REPEAT_STAGE_BTN, True, debug_label="bossrush_repeat_wait")],
+        # No Repeat Stage but the hub's Start Game instead = the game's own Auto Retry is on
+        # and has already started the next run (rare - most players have it off).
+        result = poll_until([target(config.REPEAT_STAGE_BTN, "REPEAT", debug_label="bossrush_repeat_wait"),
+                             target(config.BOSSRUSH_START_GAME_BTN, "RETRIED", debug_label="bossrush_auto_retried")],
                             interval=2.0, label="bossrush_repeat_wait", stuck_timeout=config.STUCK_TIMEOUT_MENU)
-        if result is not True:
-            return result
-        return "REPEAT"
+        if result == "RETRIED":
+            print("[BossRush] No Repeat Stage - the game's Auto Retry already started the next run.")
+        return result
 
     def click_repeat_if_present(self):
         """
@@ -543,14 +589,24 @@ class BossRushRunner:
         match = _find(config.REPEAT_STAGE_BTN)
         if not match:
             return True
-        if not click_until_gone(config.REPEAT_STAGE_BTN, match, "bossrush_repeat", clicks=2):
+        # ONE click, on a panel that has finished popping in. It used to be a double
+        # click as soon as the button was seen: View Party sits right beside Repeat Stage
+        # in Boss Rush (no Select Portal between them), and a click landing while the
+        # panel was still moving - or a second click after the first had already taken -
+        # could open View Party instead (reported live 2026-09-29). click_until_gone
+        # still re-clicks if this one doesn't register.
+        time.sleep(1.0)
+        match = _find(config.REPEAT_STAGE_BTN)
+        if not match:
+            return self._enter_hub()
+        if not click_until_gone(config.REPEAT_STAGE_BTN, match, "bossrush_repeat", clicks=1):
             return False
         time.sleep(1.0)
         return self._enter_hub()
 
     # --- a full cycle ----------------------------------------------------------------
     def play_cycle(self):
-        """One full loop: 6 gates then the boss. Returns "REPEAT" / False / "RECONNECTED"."""
+        """One full loop: 6 gates then the boss. Returns "REPEAT" / "RETRIED" / False / "RECONNECTED"."""
         for gate_number in range(1, config.BOSSRUSH_TOTAL_GATES + 1):
             if config.STOP_REQUESTED:
                 return False
