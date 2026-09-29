@@ -1537,6 +1537,18 @@ class BotEngine:
                     self.log("Disconnected mid-run - reconnected. Redoing navigation...")
                     need_nav = True
                     continue
+                if result == "RETRIED":
+                    # The game's own Auto Retry skipped Repeat Stage and already put us on
+                    # the next run's hub, Start Game up - so just enter it (camera, then
+                    # Start Game), the same way Repeat Stage would have led into it.
+                    if self._limit_reached():
+                        return
+                    self.log("Boss run done - the game's Auto Retry started the next one.")
+                    rep = runner._enter_hub()
+                    if rep is not True:
+                        self.log("Couldn't pick up the auto-retried run - checking where we are...")
+                        need_nav = True
+                    continue
                 if result == "REPEAT":
                     if self._limit_reached():
                         # Left on screen deliberately (see BossRushRunner.fight_boss's own
@@ -1550,8 +1562,11 @@ class BotEngine:
                         need_nav = True
                         continue
                     if not rep:
-                        self.log("Repeat Stage didn't click - retrying...")
-                        continue
+                        # Back through navigate(), which works out where we actually are
+                        # (results screen, party screen, hub or lobby). A plain `continue`
+                        # went straight into gate 1's walk on whatever screen was up.
+                        self.log("Repeat Stage didn't lead back to the hub - checking where we are...")
+                        need_nav = True
                     continue
                 _mark_failure("BOSS RUSH RUN FAILED")
                 return
