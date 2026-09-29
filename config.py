@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "2.3"
+APP_VERSION = "2.4"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -70,6 +70,10 @@ TEMPLATE_THRESHOLDS = {
     # 0.74 on a tester's real hub frame (even after two lossy rescales of that screenshot),
     # <= 0.34 on all 48 other screenshots in the repo (lobby, menus, stages, results).
     "assets/templates/bossrush/crimson_captain.png": 0.60,
+    # Rescaled from 1919-wide captures (see SETTINGS_BTN). settings: 0.88 on a hub frame.
+    # teleport_spawn: <= 0.54 on every screenshot without it.
+    "assets/templates/settings.png": 0.75,
+    "assets/templates/teleport_spawn.png": 0.70,
 
     # Story's difficulty buttons and the Act 1 tile were measured across every
     # reference screenshot in Images_For_Claude: present-but-not-selected they score
@@ -1265,7 +1269,7 @@ BOSSRUSH_START_BTN = f"{BOSSRUSH_DIR}/start_button.png"       # the party screen
 # scored only 0.24-0.45 live: shrunk text, see BOSSRUSH_DIR above).
 BOSSRUSH_START_GAME_BTN = START_GAME_BTN
 BOSSRUSH_ENTER_GATE_BTN = f"{BOSSRUSH_DIR}/enter_gate.png"
-BOSSRUSH_GATE = f"{BOSSRUSH_DIR}/gate.png"                    # the "Gate" labels over the hub (camera-dependent size - unused)
+BOSSRUSH_GATE = f"{BOSSRUSH_DIR}/gate.png"                    # the "Gate" labels over the hub - steering target once the camera is anchored (their size depends on zoom)
 BOSSRUSH_SELECT_CARD = f"{BOSSRUSH_DIR}/pick_card.png"       # "Pick Card / Select a card!" header (select_card.png is a full screenshot)
 BOSSRUSH_CONTINUE_BTN = f"{BOSSRUSH_DIR}/continue.png"
 # The "Crimson Captain" boss nameplate in the hub's HUD. HUD, not a label in the world,
@@ -1278,6 +1282,40 @@ BOSSRUSH_MAP_HUD = f"{BOSSRUSH_DIR}/crimson_captain.png"
 # Once the hub HUD is up, how long Start Game still gets to appear before the run
 # carries on without it (Auto Start mode - see BossRushRunner._enter_hub).
 BOSSRUSH_START_GAME_GRACE = 12.0
+
+# --- Getting to a gate when the recorded walk falls short -----------------------------
+# A recorded walk is blind: one late key-up and the character stops short of the gate
+# with no "Enter Gate" prompt (live 2026-09-29: 5 perfect runs, then run 6's gate-4
+# walk ended off the prompt and the bot pressed E at nothing 4 times and stopped).
+# Fallback 1 - steer by sight: find the "Gate" labels (BOSSRUSH_GATE; all six score
+# >= 0.90 on the anchored hub, nothing else in the repo reaches the bar), pick the
+# closest, and walk at it in short WASD pulses (jumping when a pulse doesn't move the
+# picture) until the prompt shows. The character sits at the middle of the frame -
+# the camera follows it.
+BOSSRUSH_PLAYER_POS = (800, 450)
+# Where a gate's label sits relative to the character when the prompt is up. A guess
+# until the first good walk to each gate - the runner then learns the real offset per
+# gate from the frame where the prompt was seen (BossRushRunner._learn_gate_offset).
+BOSSRUSH_GATE_LABEL_OFFSET = (0, -40)
+BOSSRUSH_SEEK_TIMEOUT = 25.0          # seconds of steering before giving up on it
+BOSSRUSH_SEEK_MAX_PULSE = 0.35        # longest single key press while steering
+BOSSRUSH_SEEK_START_SPEED = 150.0     # px/s guess for walking speed; measured as it goes
+# Fallback 2 - start over: Settings (the gear in the top bar) -> Teleport to Spawn puts
+# the character back where every walk was recorded from, and the walk is played again.
+# Both icons were captured at 1919 wide and rescaled by 1600/1919 (originals in
+# assets/templates/_original_1919x1079/). settings: 0.88 on a real hub frame.
+# teleport_spawn: not yet seen on a real frame (no screenshot of the open menu),
+# <= 0.54 on every other screenshot in the repo.
+SETTINGS_BTN = "assets/templates/settings.png"
+TELEPORT_SPAWN_BTN = "assets/templates/teleport_spawn.png"
+BOSSRUSH_GATE_RESETS = 3              # teleport-and-rewalk rounds before the run stops
+# A gate normally clears in 60-75s. Past this with no card, the fight is stuck (units
+# never placed, a fight that can't be won) - much sooner than BOSSRUSH_STUCK_TIMEOUT.
+BOSSRUSH_GATE_FIGHT_TIMEOUT = 480.0
+# A restart within this long of the last cleared gate picks the cycle up where it was
+# (BossRushRunner._resume_mid_cycle) instead of walking gate 1 again. Never Stop waits
+# at most 300s before a restart, so this covers every restart it makes.
+BOSSRUSH_RESUME_WINDOW = 900.0
 
 # Gate-clear and boss macros are shared across all 6 gates / every cycle (same map,
 # same units every time) - one preset slot each, not one per gate:
