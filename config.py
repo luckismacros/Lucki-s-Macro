@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "2.4"
+APP_VERSION = "2.5"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -62,7 +62,9 @@ TEMPLATE_THRESHOLDS = {
     # BOSSRUSH_MAP_HUD does that job now.
     "assets/templates/bossrush/pick_card.png": 0.60,
     "assets/templates/bossrush/continue.png": 0.65,
-    "assets/templates/bossrush/gate.png": 0.72,
+    # Re-cropped from a real 1600x900 hub frame (the old rescaled one scored 0.55 on it): 0.94-1.0
+    # on the labels of a real frame, no false hit on any other screenshot at 0.72.
+    "assets/templates/bossrush/gate.png": 0.80,
     # enter_gate: the E prompt scored 0.68 live while plainly on screen on gate 2 (0.34-0.46
     # on every frame without it). BossRushRunner._enter_gate also presses E blind if missed.
     "assets/templates/bossrush/enter_gate.png": 0.60,
@@ -70,10 +72,14 @@ TEMPLATE_THRESHOLDS = {
     # 0.74 on a tester's real hub frame (even after two lossy rescales of that screenshot),
     # <= 0.34 on all 48 other screenshots in the repo (lobby, menus, stages, results).
     "assets/templates/bossrush/crimson_captain.png": 0.60,
-    # Rescaled from 1919-wide captures (see SETTINGS_BTN). settings: 0.88 on a hub frame.
-    # teleport_spawn: <= 0.54 on every screenshot without it.
-    "assets/templates/settings.png": 0.75,
-    "assets/templates/teleport_spawn.png": 0.70,
+    # Cropped from real 1600x900 frames on 2026-09-29 (the earlier 1919-wide crops scored
+    # 0.51 against a real gear - Roblox's UI does NOT scale like the window does, so a
+    # 1600/1919 rescale of a UI icon is the wrong size). All score >= 0.99 on their own
+    # screen; nothing else in the repo's ~70 screenshots reaches these bars.
+    "assets/templates/settings.png": 0.85,
+    "assets/templates/teleport_spawn.png": 0.85,
+    "assets/templates/close_x.png": 0.85,
+    "assets/templates/search_Bar.png": 0.85,
 
     # Story's difficulty buttons and the Act 1 tile were measured across every
     # reference screenshot in Images_For_Claude: present-but-not-selected they score
@@ -1302,12 +1308,16 @@ BOSSRUSH_SEEK_MAX_PULSE = 0.35        # longest single key press while steering
 BOSSRUSH_SEEK_START_SPEED = 150.0     # px/s guess for walking speed; measured as it goes
 # Fallback 2 - start over: Settings (the gear in the top bar) -> Teleport to Spawn puts
 # the character back where every walk was recorded from, and the walk is played again.
-# Both icons were captured at 1919 wide and rescaled by 1600/1919 (originals in
-# assets/templates/_original_1919x1079/). settings: 0.88 on a real hub frame.
-# teleport_spawn: not yet seen on a real frame (no screenshot of the open menu),
-# <= 0.54 on every other screenshot in the repo.
+# All three cropped from real 1600x900 frames (the gear in the top bar, the "Teleport To
+# Spawn" button in the Settings panel, the panel's red X). The panel's own buttons sit at
+# fixed spots: gear (274, 34), Teleport (862, 470), X (1316, 167).
 SETTINGS_BTN = "assets/templates/settings.png"
 TELEPORT_SPAWN_BTN = "assets/templates/teleport_spawn.png"
+SETTINGS_CLOSE_BTN = "assets/templates/close_x.png"
+# The panel's search box (empty state, "Search..."). Reset-to-spawn types "teleport" into it
+# so the Teleport To Spawn row is the first result wherever the list happens to be scrolled.
+SETTINGS_SEARCH_BAR = "assets/templates/search_Bar.png"
+SETTINGS_SEARCH_POS = (934, 175)
 BOSSRUSH_GATE_RESETS = 3              # teleport-and-rewalk rounds before the run stops
 # A gate normally clears in 60-75s. Past this with no card, the fight is stuck (units
 # never placed, a fight that can't be won) - much sooner than BOSSRUSH_STUCK_TIMEOUT.

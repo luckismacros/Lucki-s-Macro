@@ -35,7 +35,7 @@ import pydirectinput
 
 import config
 from vision import capture_screen, find_template, find_all_templates
-from input_controller import click_at, anchor_camera, high_res_timer, mark_input
+from input_controller import click_at, anchor_camera, high_res_timer, mark_input, type_text
 from modules.polling import poll_until, target, settle_match, click_until_gone
 from modules.gamemode_select import click_play, _wait_and_click, _run_steps, _sweep_carousel
 from modules.stage_player import play_preset
@@ -466,6 +466,13 @@ class BossRushRunner:
             if result is not None:
                 return result
 
+            if gate_number >= 2 and _find(config.BOSSRUSH_SELECT_CARD):
+                # Can't get in because the previous gate isn't over: its card is up now.
+                # Finish it properly instead of teleporting around a live fight.
+                print(f"[BossRush] Gate {gate_number - 1}'s card screen is up - it wasn't finished. "
+                      f"Finishing it first.")
+                return "PREVIOUS_UNFINISHED"
+
             result = self._seek_gate(gate_number)
             if result in (False, "RECONNECTED"):
                 return result
@@ -741,12 +748,13 @@ class BossRushRunner:
     # --- starting over from spawn ---------------------------------------------------
     def _reset_to_spawn(self):
         """
-        Settings (top-bar gear) -> Teleport to Spawn, then closes the menu and re-anchors
-        the camera - puts the character back on the spot every gate walk was recorded
-        from. True / False / "RECONNECTED"; a menu that can't be worked stops the run.
+        Settings (top-bar gear) -> search "teleport" -> Teleport To Spawn, then closes the
+        panel and re-anchors the camera - puts the character back on the spot every gate
+        walk was recorded from. True / False / "RECONNECTED"; a menu that can't be worked
+        stops the run.
         """
         self._phase("RESET TO SPAWN", "#f9a825")
-        for attempt in (1, 2):
+        for attempt in (1, 2, 3):
             if config.STOP_REQUESTED:
                 return False
             shot = capture_screen()
@@ -754,21 +762,25 @@ class BossRushRunner:
                 return "RECONNECTED"
             teleport = _find(config.TELEPORT_SPAWN_BTN, shot)
             if not teleport:
-                gear = _find(config.SETTINGS_BTN, shot, debug_label="settings_btn")
-                if not gear:
-                    path = health.save_debug_screenshot("bossrush_no_settings_button")
-                    print(f"[BossRush] Settings button not found (screen saved: {path}).")
-                    continue
-                print(f"[BossRush] Opening Settings at ({gear[0]}, {gear[1]}).")
-                click_at(gear[0], gear[1])
-                result = poll_until([target(config.TELEPORT_SPAWN_BTN, True, debug_label="teleport_spawn")],
-                                    interval=0.4, label="teleport_spawn", timeout=5.0, stuck_timeout=None)
-                if result in (False, "RECONNECTED"):
-                    return result
-                teleport = _find(config.TELEPORT_SPAWN_BTN) if result is True else None
+                if not _find(config.SETTINGS_SEARCH_BAR, shot):
+                    # Panel not open (the gear only exists while it isn't - it changes look
+                    # while open, which is why the panel is detected by its search box).
+                    gear = _find(config.SETTINGS_BTN, shot, debug_label="settings_btn")
+                    if not gear:
+                        path = health.save_debug_screenshot("bossrush_no_settings_button")
+                        print(f"[BossRush] Settings button not found (screen saved: {path}).")
+                        time.sleep(1.0)
+                        continue
+                    print(f"[BossRush] Opening Settings at ({gear[0]}, {gear[1]}).")
+                    click_at(gear[0], gear[1])
+                    time.sleep(1.2)
+                teleport = self._search_for_teleport()
+                if teleport in (False, "RECONNECTED"):
+                    return teleport
                 if not teleport:
                     path = health.save_debug_screenshot("bossrush_no_teleport_button")
-                    print(f"[BossRush] Settings opened but no Teleport to Spawn button (screen saved: {path}).")
+                    print(f"[BossRush] Settings is open but Teleport To Spawn didn't show up "
+                          f"(screen saved: {path}).")
                     self._close_settings()
                     continue
 
@@ -786,18 +798,59 @@ class BossRushRunner:
         print(f"[BossRush] Couldn't teleport back to spawn (screen saved: {path}).")
         return _halt("BOSS RUSH COULD NOT RESET TO SPAWN")
 
+    def _search_for_teleport(self):
+        """
+        With the Settings panel open: clicks the search box, clears it and types
+        "teleport", then waits for the Teleport To Spawn button. Returns its match, None
+        if it never showed, False / "RECONNECTED" as usual.
+
+        A box that still holds last time's text is handled too - the panel keeps it, and
+        then shows the placeholder no more, so the box is clicked at its fixed spot
+        instead of being found. Nothing is typed unless the panel is really open (its
+        search box or its red X is on screen): stray keystrokes into the game would be
+        hotkeys.
+        """
+        shot = capture_screen()
+        bar = _find(config.SETTINGS_SEARCH_BAR, shot)
+        close = _find(config.SETTINGS_CLOSE_BTN, shot)
+        panel_open = bool(bar) or bool(close and abs(close[0] - 1316) < 40 and abs(close[1] - 167) < 40)
+        if not panel_open and not _find(config.TELEPORT_SPAWN_BTN, shot):
+            print("[BossRush] The Settings panel isn't open - not typing into the game.")
+            return None
+        x, y = (bar[0], bar[1]) if bar else config.SETTINGS_SEARCH_POS
+        if not _find(config.TELEPORT_SPAWN_BTN, shot):
+            print(f"[BossRush] Searching the settings for 'teleport' (box at ({x}, {y})).")
+            click_at(x, y)
+            time.sleep(0.4)
+            for _ in range(12):
+                pydirectinput.press("backspace")
+            type_text("teleport")
+            mark_input()
+            time.sleep(1.0)
+        result = poll_until([target(config.TELEPORT_SPAWN_BTN, True, debug_label="teleport_spawn")],
+                            interval=0.4, label="teleport_spawn", timeout=5.0, stuck_timeout=None)
+        if result in (False, "RECONNECTED"):
+            return result
+        return _find(config.TELEPORT_SPAWN_BTN) if result is True else None
+
     def _close_settings(self):
-        """The settings menu is closed with the same gear that opened it."""
-        for _ in range(2):
+        """
+        Closes the Settings panel with its own red X (the gear looks different while the
+        panel is open, so it can't be relied on to toggle it). The X is only accepted near
+        where that panel draws it - other panels have identical X buttons.
+        """
+        for _ in range(3):
             shot = capture_screen()
             if not _find(config.TELEPORT_SPAWN_BTN, shot):
-                return
-            gear = _find(config.SETTINGS_BTN, shot)
-            if not gear:
-                return
-            click_at(gear[0], gear[1])
+                return True
+            close = _find(config.SETTINGS_CLOSE_BTN, shot)
+            if close and abs(close[0] - 1316) < 40 and abs(close[1] - 167) < 40:
+                click_at(close[0], close[1])
+            else:
+                click_at(1316, 167)
             time.sleep(0.8)
         print("[BossRush] The settings menu may still be open.")
+        return False
 
     def _entered_without_start_game(self, prompt_seen):
         """
@@ -901,6 +954,11 @@ class BossRushRunner:
                 return result
 
             result = self._enter_gate(gate_number)    # returns once the gate has opened
+            if result == "PREVIOUS_UNFINISHED":
+                result = self._finish_gate(gate_number - 1)
+                if result is not True:
+                    return result
+                return self.clear_gate(gate_number)
             if result is not True:
                 return result
 
@@ -921,29 +979,49 @@ class BossRushRunner:
             if gate_number == 1:
                 SESSION.match_started()
 
+        return self._finish_gate(gate_number)
+
+    def _finish_gate(self, gate_number):
+        """
+        The fight is running: waits for the card that ends it (or a defeat), picks a card,
+        and gets back to the hub. True / False / "RECONNECTED" / whatever _gate_lost gives.
+        """
         self._phase("FIGHTING GATE", "#2e7d32")
         # A lost gate ends the run on the results screen - only the card was watched for
         # before, so a defeat here sat out the full 25-minute stuck timer. And a gate that
         # takes far longer than the usual ~70s is stuck, not slow.
-        result = poll_until([target(config.BOSSRUSH_SELECT_CARD, True, debug_label="bossrush_select_card"),
-                             target(config.DEFEAT_TEXT, "DEFEAT", debug_label="bossrush_gate_defeat")],
-                            interval=1.0, label="bossrush_select_card",
-                            timeout=config.BOSSRUSH_GATE_FIGHT_TIMEOUT, stuck_timeout=None)
-        if result == "DEFEAT":
-            return self._gate_lost(gate_number)
-        if result == "TIMEOUT":
-            path = health.save_debug_screenshot("bossrush_gate_fight_stuck")
-            print(f"[BossRush] Gate {gate_number} hasn't finished after "
-                  f"{config.BOSSRUSH_GATE_FIGHT_TIMEOUT / 60:.0f} minutes (screen saved: {path}).")
-            return _halt("BOSS RUSH GATE FIGHT STUCK")
-        if result is not True:
-            return result
+        deadline = time.time() + config.BOSSRUSH_GATE_FIGHT_TIMEOUT
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                result = "TIMEOUT"
+            else:
+                result = poll_until([target(config.BOSSRUSH_SELECT_CARD, True, debug_label="bossrush_select_card"),
+                                     target(config.DEFEAT_TEXT, "DEFEAT", debug_label="bossrush_gate_defeat")],
+                                    interval=1.0, label="bossrush_select_card",
+                                    timeout=remaining, stuck_timeout=None)
+            if result == "DEFEAT":
+                return self._gate_lost(gate_number)
+            if result == "TIMEOUT":
+                path = health.save_debug_screenshot("bossrush_gate_fight_stuck")
+                print(f"[BossRush] Gate {gate_number} hasn't finished after "
+                      f"{config.BOSSRUSH_GATE_FIGHT_TIMEOUT / 60:.0f} minutes (screen saved: {path}).")
+                return _halt("BOSS RUSH GATE FIGHT STUCK")
+            if result is not True:
+                return result
+            # One frame isn't proof: live 2026-09-29 a single matching frame made the bot
+            # call gate 1 cleared and walk off while wave 10 was still being fought (the
+            # unit panel was open on screen). The card stays up until picked, so a real
+            # one is still there a moment later.
+            time.sleep(0.7)
+            match = _find(config.BOSSRUSH_SELECT_CARD)
+            if match:
+                break
+            print("[BossRush] Card screen flickered for a moment but isn't there - the fight isn't over.")
 
-        match = _find(config.BOSSRUSH_SELECT_CARD)
-        if match:
-            print("[BossRush] Gate cleared - picking a card (middle of the screen).")
-            click_until_gone(config.BOSSRUSH_SELECT_CARD, match, "bossrush_select_card",
-                             point=(config.REFERENCE_WIDTH // 2, config.REFERENCE_HEIGHT // 2))
+        print("[BossRush] Gate cleared - picking a card (middle of the screen).")
+        click_until_gone(config.BOSSRUSH_SELECT_CARD, match, "bossrush_select_card",
+                         point=(config.REFERENCE_WIDTH // 2, config.REFERENCE_HEIGHT // 2))
         print(f"[BossRush] Gate {gate_number}/{config.BOSSRUSH_TOTAL_GATES} cleared.")
         _set_progress(gate_number, auto_start=self.auto_start)
 
