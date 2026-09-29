@@ -607,3 +607,37 @@ def find_template(screenshot, template_path, threshold=0.85, debug_label=None):
     # in reference space, so this is the one place a real screen pixel is translated.
     center_x, center_y = config.to_reference(center_x, center_y)
     return (center_x, center_y, best_val)
+
+
+def find_all_templates(screenshot, template_path, threshold=0.85, min_separation=30):
+    """
+    Every place template_path appears, not just the best one: [(x, y, confidence), ...]
+    in reference space, best first. Built for things drawn several times at once - Boss
+    Rush's six "Gate" labels over the hub - where find_template() would only ever
+    return one of them.
+
+    min_separation: two hits closer than this (reference px, per axis) are the same
+    thing - one template scores high over a small neighbourhood around its true spot,
+    so the lower of the two is dropped.
+    """
+    hits = []
+    for candidate in _match_candidates(template_path):
+        scale = _candidate_scale(candidate, template_path)
+        template = _load_template(candidate, scale=scale)
+        t_h, t_w = template.shape[:2]
+        s_h, s_w = screenshot.shape[:2]
+        if t_h > s_h or t_w > s_w:
+            continue
+        bar = config.effective_threshold(template_path, threshold, shrunk=scale < 0.999)
+        scores = cv2.matchTemplate(screenshot, template, cv2.TM_CCOEFF_NORMED)
+        ys, xs = np.where(scores >= bar)
+        for y, x in zip(ys, xs):
+            cx, cy = config.to_reference(x + t_w // 2, y + t_h // 2)
+            hits.append((cx, cy, float(scores[y, x])))
+
+    hits.sort(key=lambda h: h[2], reverse=True)
+    kept = []
+    for x, y, conf in hits:
+        if all(abs(x - kx) >= min_separation or abs(y - ky) >= min_separation for kx, ky, _ in kept):
+            kept.append((x, y, conf))
+    return kept
