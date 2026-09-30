@@ -63,7 +63,8 @@ def handle_game_results_if_present(screenshot):
 
     print("[Prompts] 'Game Results' recovery button detected - the match-end popup was "
           "closed before it could be read. Clicking it to reopen...")
-    x, y, _ = match
+    x, y, confidence = match
+    print(f"[Prompts] ...it matched at ({x}, {y}), confidence={confidence:.2f}.")
     click_at(x, y, delay_before=0.05, delay_after=0.5)
     return True
 

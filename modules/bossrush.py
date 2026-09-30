@@ -36,12 +36,25 @@ import pydirectinput
 import config
 from vision import capture_screen, find_template, find_all_templates
 from input_controller import click_at, anchor_camera, high_res_timer, mark_input, type_text
-from modules.polling import poll_until, target, settle_match, click_until_gone
+from modules.polling import poll_until as _poll_until, target, settle_match, click_until_gone
 from modules.gamemode_select import click_play, _wait_and_click, _run_steps, _sweep_carousel
 from modules.stage_player import play_preset
 from modules.stats import SESSION
 from modules import health, notify
 from modules.reconnect import handle_disconnect_if_present
+
+
+def poll_until(*args, **kwargs):
+    """
+    modules.polling.poll_until with the generic "Game Results" recovery click OFF for every
+    Boss Rush wait. That handler clicks wherever its template matches on ANY tick, and on
+    the boss's end screen it can match one tick before the Victory text has animated in -
+    live 2026-09-30 (a 16-hour run, 81 matches): it clicked on the end screen, which opened
+    the lobby's party panel (View Party), and the run then waited 25 minutes for a Victory
+    that could never appear. Boss Rush's own waits cover the end screen themselves.
+    """
+    kwargs.setdefault("game_results", False)
+    return _poll_until(*args, **kwargs)
 
 
 # Where the current cycle is up to, kept at module level so it outlives the runner: a
@@ -184,6 +197,9 @@ class BossRushRunner:
         # (gate number, step) to pick a cycle up from - set by navigate() when a restart
         # lands mid-cycle, used once by play_cycle(). Gate 7 = the boss.
         self._resume = None
+        # View Party / party-screen self-heal (see _leave_party_screen)
+        self._last_back_click = 0.0
+        self._back_clicks = 0
 
     def _phase(self, text, color="#4fc3f7"):
         if self.set_phase:
@@ -1107,8 +1123,41 @@ class BossRushRunner:
             health.save_debug_screenshot("bossrush_too_many_defeats")
             print(f"[BossRush] {self.consecutive_defeats} defeats in a row - stopping.")
             return _halt("TOO MANY DEFEATS (BOSS RUSH)")
+        self._back_clicks = 0
         return poll_until([target(config.REPEAT_STAGE_BTN, "REPEAT", debug_label="bossrush_repeat_wait")],
-                          interval=2.0, label="bossrush_repeat_wait", stuck_timeout=config.STUCK_TIMEOUT_MENU)
+                          interval=2.0, label="bossrush_repeat_wait", stuck_timeout=config.STUCK_TIMEOUT_MENU,
+                          custom_check=self._leave_party_screen)
+
+    def _leave_party_screen(self, shot):
+        """
+        poll_until custom_check for the waits that follow a finished fight. A View Party
+        click (by whatever means) opens the lobby's party panel, where the run used to wait
+        for a Victory / Repeat Stage that can't show until that panel is left. Back returns
+        to the end screen, and the wait then carries on as normal. Back exists nowhere else
+        during these waits, so it isn't cross-checked against anything; it's clicked at most
+        once per 4s and at most 8 times a cycle. Always returns None (the wait goes on).
+        """
+        if self._back_clicks >= 8 or time.time() - self._last_back_click < 4.0:
+            return None
+        back = _find(config.BACK_BTN, shot)
+        if not back:
+            return None
+        self._back_clicks += 1
+        self._last_back_click = time.time()
+        print(f"[BossRush] A party screen is up where the end screen should be (Back at "
+              f"({back[0]}, {back[1]}), confidence={back[2]:.2f}) - clicking Back "
+              f"({self._back_clicks}/8).")
+        if self._back_clicks == 1:
+            health.save_debug_screenshot("bossrush_party_screen_in_wait", shot)
+            try:
+                notify.problem("Boss Rush landed on the party screen",
+                               "The end screen was replaced by the lobby's party panel (View Party "
+                               "got clicked). Clicking Back to return to it.",
+                               image_bytes=health.jpg_bytes(shot))
+            except Exception as e:
+                print(f"[notify] Could not send the party-screen message: {e}")
+        click_at(back[0], back[1])
+        return None
 
     # --- the boss ------------------------------------------------------------------------
     def fight_boss(self, start_at="start"):
@@ -1139,16 +1188,36 @@ class BossRushRunner:
             # Not SESSION.match_started() here - the run was already started at gate 1.
 
         self._phase("FIGHTING BOSS", "#c62828")
+        self._back_clicks = 0
         result = poll_until(
             [target(config.VICTORY_TEXT, "VICTORY", debug_label="bossrush_victory"),
              target(config.DEFEAT_TEXT, "DEFEAT", debug_label="bossrush_defeat"),
              # The game's own Auto Retry can skip the result screen entirely and land
              # straight back on the new run's hub (see the Repeat Stage wait below).
-             target(config.BOSSRUSH_START_GAME_BTN, "RETRIED", debug_label="bossrush_auto_retried")],
-            interval=2.0, label="bossrush_boss_result", stuck_timeout=config.BOSSRUSH_STUCK_TIMEOUT)
+             target(config.BOSSRUSH_START_GAME_BTN, "RETRIED", debug_label="bossrush_auto_retried"),
+             # The end screen's Repeat Stage button proves the fight is over even when the
+             # Victory text is missed (its popup animates in; a closed popup never shows it).
+             target(config.REPEAT_STAGE_BTN, "ENDED", debug_label="bossrush_ended")],
+            interval=2.0, label="bossrush_boss_result", stuck_timeout=config.BOSSRUSH_STUCK_TIMEOUT,
+            custom_check=self._leave_party_screen)
         if result in (False, "RECONNECTED"):
             return result
         _set_progress(0)                # the cycle is over either way
+
+        if result == "ENDED":
+            # Give the Victory / Defeat text a moment to arrive before deciding which it was.
+            result = "VICTORY"
+            for _ in range(4):
+                time.sleep(1.0)
+                shot = capture_screen()
+                if _find(config.DEFEAT_TEXT, shot):
+                    result = "DEFEAT"
+                    break
+                if _find(config.VICTORY_TEXT, shot):
+                    break
+            else:
+                print("[BossRush] The end screen is up but neither Victory nor Defeat text was read - "
+                      "counting it as a win.")
 
         if result == "RETRIED":
             # Result screen never seen. Auto Retry only follows a finished run, so it's
@@ -1177,7 +1246,8 @@ class BossRushRunner:
         # and has already started the next run (rare - most players have it off).
         result = poll_until([target(config.REPEAT_STAGE_BTN, "REPEAT", debug_label="bossrush_repeat_wait"),
                              target(config.BOSSRUSH_START_GAME_BTN, "RETRIED", debug_label="bossrush_auto_retried")],
-                            interval=2.0, label="bossrush_repeat_wait", stuck_timeout=config.STUCK_TIMEOUT_MENU)
+                            interval=2.0, label="bossrush_repeat_wait", stuck_timeout=config.STUCK_TIMEOUT_MENU,
+                            custom_check=self._leave_party_screen)
         if result == "RETRIED":
             print("[BossRush] No Repeat Stage - the game's Auto Retry already started the next run.")
         return result
