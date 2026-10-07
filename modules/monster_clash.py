@@ -508,7 +508,8 @@ class MonsterClashRunner:
         seen_running = [False]
 
         def _other_end(shot):
-            if self.mode == FARM and not _find(config.START_GAME_BTN, shot):
+            start_game_up = _find(config.START_GAME_BTN, shot)
+            if not start_game_up:
                 seen_running[0] = True
             if time.time() - started < config.MONSTER_CLASH_MIN_MATCH:
                 return None
@@ -519,10 +520,17 @@ class MonsterClashRunner:
                     return "SCREEN"
                 if self.in_rift and _find(config.MONSTER_CLASH_CLOSE_GUI_BTN, shot):
                     return "SCREEN"
-            elif _find(config.START_GAME_BTN, shot):
+                # The results popup closed by itself (only its Game Results button left) -
+                # the match is over. Not clicked here: it sits under the Start Rift prompt.
+                if seen_running[0] and _find(config.GAME_RESULTS_BTN, shot):
+                    return "SCREEN"
+            if start_game_up:
                 if seen_running[0]:
-                    return "RETRIED"
-                print("[MonsterClash] Start Game is still waiting to be pressed (Auto Start looks off) - pressing it.")
+                    # The match ran and the stage is back at its Start Game: over, whether or
+                    # not the Victory banner was caught (live 2026-10-07, Rift hunt: it wasn't,
+                    # and the run sat on "Waiting for the match to end" with Start Game up).
+                    return "SCREEN" if self.mode == RIFT else "RETRIED"
+                print("[MonsterClash] Start Game is still waiting to be pressed - pressing it.")
                 click_start_game()
                 return None
             return None
@@ -682,13 +690,15 @@ class MonsterClashRunner:
                 if result is not None:
                     return result
                 break
-            if _find(config.START_GAME_BTN, shot):
-                # The stage restarted by itself: Auto Retry is on.
-                print("[MonsterClash] The next Start Game came up by itself - the game's Auto Retry is ON. "
-                      "Rift hunt needs it OFF (the rift can't spawn otherwise).")
-                self._warn_auto_retry()
-                return True
+            # A Start Game here is just the stage waiting for the next match (the game can skip
+            # the results panel). The rift can still land, so the full wait is kept; Start
+            # Game is pressed by prepare_and_start afterwards. Auto Retry being on shows up
+            # differently - the match starts without Start Game being pressed (see
+            # _wait_for_start_game).
             time.sleep(0.5)
+        if _find(config.START_GAME_BTN) and not _find(config.REPEAT_STAGE_BTN):
+            print("[MonsterClash] No rift this time - Start Game is already up for the next match.")
+            return True
 
         # No rift this time: Repeat Stage. If its panel was closed, Game Results reopens it -
         # only now, once the rift is ruled out (that button sits under the rift prompt).
