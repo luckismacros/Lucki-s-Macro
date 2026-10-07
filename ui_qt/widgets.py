@@ -77,6 +77,7 @@ ICONS = {
     "portals": '<circle cx="12" cy="12" r="9"/><path d="M12 7a5 5 0 1 0 5 5"/>',
     "expeditions": '<circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5 5-2z"/>',
     "bossrush": '<path d="M5 21V9a7 7 0 0 1 14 0v12"/><path d="M12 21V11"/>',
+    "monsterclash": '<path d="M3 7h18"/><path d="M12 7v3"/><path d="M6 13a6 3 0 0 0 12 0 6 3 0 0 0-12 0z"/><path d="M18 13h3l1-2"/><path d="M8 19h8"/><path d="M10 16v3M14 16v3"/>',
     "others": '<rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/>'
               '<rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/>',
     "settings": '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9 7 7M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/>',

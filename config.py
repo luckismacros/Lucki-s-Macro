@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "2.7"
+APP_VERSION = "2.8"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -788,6 +788,7 @@ GAMEMODES = {
     "expeditions": {"label": "Expeditions", "enabled": True},
     "portals":     {"label": "Portals",     "enabled": True},
     "bossrush":    {"label": "Boss Rush",   "enabled": True},
+    "monsterclash": {"label": "Monster Clash", "enabled": True},
     "others":      {"label": "Others",      "enabled": False},
 }
 
@@ -1357,3 +1358,53 @@ def bossrush_walk_variant(gate_number):
 # counts as stuck. Same order of magnitude as Expeditions' defense nodes - a boss fight
 # especially could run long.
 BOSSRUSH_STUCK_TIMEOUT = 1500.0
+
+# --- Monster Clash (event) ---
+# Lobby -> Events -> Monster Clash -> Play Event -> Play - Choose Stage -> Select Stage
+# -> Start, then on the stage: Auto Play on, walk to the helicopter's landing spot, Start
+# Game. When a match ends a helicopter can land on that spot; pressing E at it takes the
+# character to a bonus stage on the same map (Auto Play + Start Game again), and that
+# bonus stage then sends it back to the normal one. See modules/monster_clash.py.
+#
+# The crops were captured from a 1920x1080 window and rescaled by 1600/1919 - the factor
+# that best matched the Events button on a real 1600x900 lobby frame (0.89 after
+# rescaling); the untouched captures are in monster_clash/_original_1920x1080/.
+# Re-crop with tools/template_capture.py while pinned
+# if one of them misses - the log prints the confidence it reached.
+MONSTER_CLASH_DIR = "assets/templates/monster_clash"
+MONSTER_CLASH_EVENTS_BTN = f"{MONSTER_CLASH_DIR}/events.png"           # the lobby's Events button (left column)
+MONSTER_CLASH_CARD = f"{MONSTER_CLASH_DIR}/monster_clash.png"          # "Battle Event / Monster Clash" card
+MONSTER_CLASH_PLAY_EVENT_BTN = f"{MONSTER_CLASH_DIR}/play_event.png"
+MONSTER_CLASH_CHOOSE_STAGE_BTN = f"{MONSTER_CLASH_DIR}/choose_stage.png"
+MONSTER_CLASH_SELECT_STAGE_BTN = f"{MONSTER_CLASH_DIR}/select_stage.png"
+MONSTER_CLASH_START_BTN = f"{MONSTER_CLASH_DIR}/start.png"             # the party screen's Start
+# OPTIONAL: a crop of the helicopter's "E" prompt. Without it, once the helicopter is
+# detected (see MONSTER_CLASH_RETRY_GRACE) E is pressed blind every
+# MONSTER_CLASH_BLIND_E_INTERVAL until the bonus stage loads; with it, only at the prompt.
+MONSTER_CLASH_HELI_PROMPT = f"{MONSTER_CLASH_DIR}/heli_prompt.png"
+
+for _path in (MONSTER_CLASH_EVENTS_BTN, MONSTER_CLASH_CARD, MONSTER_CLASH_PLAY_EVENT_BTN,
+              MONSTER_CLASH_CHOOSE_STAGE_BTN, MONSTER_CLASH_SELECT_STAGE_BTN, MONSTER_CLASH_START_BTN):
+    # Rescaled crops (see above): Events scored 0.89 on a real frame, and nothing tested
+    # reached 0.33 on a lobby frame or 0.50 on one of the other green buttons.
+    TEMPLATE_THRESHOLDS.setdefault(_path, 0.70)
+TEMPLATE_THRESHOLDS.setdefault(MONSTER_CLASH_HELI_PROMPT, 0.65)
+
+# The walk to the helicopter's landing spot - walk only, recorded from the stage's spawn
+# with the camera anchored, the same way as Boss Rush's gate walks:
+# presets/monsterclash_heli_walk_<name>.json. A default can ship in assets/default_presets/.
+MONSTER_CLASH_PRESET_LOCATION = "monsterclash"
+MONSTER_CLASH_WALK_VARIANT = "heli_walk"
+
+# With the game's Auto Retry on, the next round's Start Game is back within this many
+# seconds of a match ending - unless the helicopter has come, which holds Auto Retry.
+# So "no Start Game after this long" is how the helicopter is detected.
+MONSTER_CLASH_RETRY_GRACE = 3.0
+# Once the helicopter is assumed: how long to keep pressing E (it has to fly in and land)
+# before giving up on it and just waiting for the next stage.
+MONSTER_CLASH_HELI_WAIT = 90.0
+# How often E is pressed while waiting for it.
+MONSTER_CLASH_BLIND_E_INTERVAL = 1.5
+# A Start Game seen this soon after starting a match is that match's own button fading
+# out, not Auto Retry's next one.
+MONSTER_CLASH_MIN_MATCH = 20.0

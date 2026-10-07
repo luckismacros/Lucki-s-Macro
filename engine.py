@@ -50,6 +50,7 @@ from modules.polling import poll_until, target
 from modules.portal_reward import pick_portal_reward
 from modules.expedition import ExpeditionRunner
 from modules.bossrush import BossRushRunner
+from modules.monster_clash import MonsterClashRunner, has_heli_prompt_crop
 from modules.stats import SESSION
 from modules import health, notify, lobby
 from modules.fishing import start_fishing
@@ -1570,6 +1571,88 @@ class BotEngine:
                     continue
                 _mark_failure("BOSS RUSH RUN FAILED")
                 return
+        except Exception as e:
+            self.log(f"ERROR: Bot crashed unexpectedly - {e}")
+            if not self.user_stop_requested:
+                config.STUCK_DETECTED = f"CRASHED ({type(e).__name__})"
+            try:
+                shot_bytes = health.jpg_bytes()
+            except Exception:
+                shot_bytes = None
+            notify.send(f"```{e}```", category="problems", title="Bot crashed",
+                        good=False, image_bytes=shot_bytes)
+        finally:
+            self._cleanup()
+
+    def run_monster_clash(self, walk_preset_name):
+        """
+        Farms the Monster Clash event: lobby -> stage -> (walk to the helicopter spot) ->
+        Auto Play + Start Game -> match -> helicopter window -> next stage (Repeat Stage,
+        or the helicopter's bonus stage and back). The flow itself lives in
+        modules/monster_clash.py; this owns the outer loop - same shape as
+        run_boss_rush() above.
+        """
+        def _mark_failure(reason):
+            if not config.STOP_REQUESTED and not config.STUCK_DETECTED:
+                config.STUCK_DETECTED = reason
+
+        try:
+            self.set_phase("DETECTING STATE", "#a8a8a8")
+            if not self.ui.focus_and_pin():
+                return
+
+            runner = MonsterClashRunner(walk_preset_name, set_phase=self.set_phase)
+            self.ui.calibrate_ui_scale(capture_screen())
+            self.log(f"Monster Clash: Auto Play, helicopter walk '{walk_preset_name}'"
+                     f"{'' if has_heli_prompt_crop() else ' (no helicopter prompt crop - E is pressed blind)'}.")
+
+            need_nav = True
+            in_match = False
+            while not config.STOP_REQUESTED:
+                if need_nav:
+                    result = runner.navigate()
+                    if result == "RECONNECTED":
+                        self.log("Disconnected mid-navigation - reconnected. Retrying...")
+                        continue
+                    if not result:
+                        self.log("Failed to navigate to Monster Clash.")
+                        _mark_failure("MONSTER CLASH NAVIGATION FAILED")
+                        return
+                    need_nav = False
+                    in_match = result == "IN_MATCH"
+
+                if not in_match:
+                    result = runner.prepare_and_start()
+                    if result == "RECONNECTED":
+                        self.log("Disconnected before the match started - reconnected. Redoing navigation...")
+                        need_nav = True
+                        continue
+                    if not result:
+                        _mark_failure("MONSTER CLASH START FAILED")
+                        return
+                in_match = False
+
+                result = runner.play_match()
+                if result == "RECONNECTED":
+                    self.log("Disconnected mid-match - reconnected. Redoing navigation...")
+                    need_nav = True
+                    continue
+                if not result:
+                    _mark_failure("MONSTER CLASH MATCH FAILED")
+                    return
+                if self._limit_reached():
+                    # Repeat Stage is left on screen, same as every other mode, so a
+                    # queue's next step can Exit from it.
+                    return
+
+                result = runner.continue_after_match()
+                if result == "RECONNECTED":
+                    self.log("Disconnected after the match - reconnected. Redoing navigation...")
+                    need_nav = True
+                    continue
+                if not result:
+                    _mark_failure("MONSTER CLASH NEXT STAGE FAILED")
+                    return
         except Exception as e:
             self.log(f"ERROR: Bot crashed unexpectedly - {e}")
             if not self.user_stop_requested:
