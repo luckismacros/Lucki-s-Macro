@@ -60,6 +60,7 @@ class SessionStats:
         self.rewards_picked = 0
         self.challenges_skipped = 0
         self.restarts = 0
+        self.rifts = 0
         self._match_started_at = None
         self._match_durations = []
 
@@ -132,6 +133,10 @@ class SessionStats:
     def challenge_skipped(self):
         self.challenges_skipped += 1
 
+    def rift(self):
+        """Monster Clash: the Monster's Rift spawned and was entered."""
+        self.rifts += 1
+
     def restarted(self):
         """A Never Stop restart after the run stopped on its own."""
         self.restarts += 1
@@ -146,6 +151,8 @@ class SessionStats:
             parts.append(f"{self.victories}W / {self.defeats}L")
         if self.rewards_picked:
             parts.append(f"{self.rewards_picked} rewards")
+        if self.rifts:
+            parts.append(f"{self.rifts} rifts")
         if self.disconnects:
             parts.append(f"{self.disconnects} reconnects")
         if self.restarts:
@@ -181,6 +188,8 @@ class SessionStats:
             fields.append(("Portal rewards", str(self.rewards_picked)))
         if self.challenges_skipped:
             fields.append(("Skipped (cooldown)", str(self.challenges_skipped)))
+        if self.rifts:
+            fields.append(("Rifts", str(self.rifts)))
         if self.disconnects:
             fields.append(("Reconnects", str(self.disconnects)))
         if self.restarts:
@@ -206,6 +215,8 @@ class SessionStats:
             lines.append(f"  Portal rewards:      {self.rewards_picked}")
         if self.challenges_skipped:
             lines.append(f"  Challenges skipped:  {self.challenges_skipped} (on cooldown)")
+        if self.rifts:
+            lines.append(f"  Rifts entered:       {self.rifts}")
         if self.disconnects:
             lines.append(f"  Disconnects handled: {self.disconnects}")
         if self.restarts:

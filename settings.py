@@ -12,6 +12,8 @@ uses for its own _base_dir) rather than relying on the current working directory
 since theme.py imports this before gui.py has had a chance to chdir into place.
 """
 import json
+import shutil
+import threading
 import os
 import sys
 
@@ -71,7 +73,9 @@ DEFAULTS = {
     # limit) - see gui.BotGUI._supervised_run().
     "stop_after_defeats": True,
     "max_defeats": 4,
-    "never_stop": False,
+    # On by default since 2.9: an unattended run that hits one problem (a missed button,
+    # a slow menu, a kick) should recover by itself, not sit stopped until morning.
+    "never_stop": True,
 
     # --- Qt window (app_qt.py) ---
     "reduce_motion": False,         # turn every animation into an instant change
@@ -104,12 +108,15 @@ DEFAULTS = {
 def load():
     """Returns the saved settings merged over DEFAULTS - unknown/missing keys
     fall back silently so an old or hand-edited settings.json can't crash startup."""
-    if not os.path.exists(SETTINGS_PATH):
-        return dict(DEFAULTS)
-    try:
-        with open(SETTINGS_PATH, "r") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError):
+    data = _read(SETTINGS_PATH)
+    if data is None:
+        # Missing or unreadable (a save cut off by a crash/power loss used to leave a
+        # half-written file here, which silently reset every setting, webhook included):
+        # the copy kept from the last good save.
+        data = _read(SETTINGS_PATH + ".bak")
+        if data is not None:
+            print("[settings] settings.json was missing or damaged - restored from the backup copy.")
+    if data is None:
         return dict(DEFAULTS)
 
     merged = dict(DEFAULTS)
@@ -128,8 +135,44 @@ def load():
     return merged
 
 
+def _read(path):
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except (json.JSONDecodeError, OSError, ValueError):
+        return None
+
+
+_save_lock = threading.Lock()
+
+
 def save(values):
     """Writes the full settings dict. Callers should load(), mutate, then save()
-    the merged result so an unrelated key never gets dropped."""
-    with open(SETTINGS_PATH, "w") as f:
-        json.dump(values, f, indent=2)
+    the merged result so an unrelated key never gets dropped.
+
+    Atomic: written to a temp file and swapped in, so a crash or power cut mid-save can't
+    leave a half-written settings.json; the previous good file is kept as .bak. Locked,
+    because the bot thread (UI scale calibration) and the window both save."""
+    with _save_lock:
+        try:
+            snapshot = json.loads(json.dumps(dict(values)))   # copy before another thread changes it
+        except Exception as e:
+            print(f"[settings] Couldn't save settings: {e}")
+            return
+        tmp = SETTINGS_PATH + ".tmp"
+        try:
+            with open(tmp, "w") as f:
+                json.dump(snapshot, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            if os.path.exists(SETTINGS_PATH) and _read(SETTINGS_PATH) is not None:
+                try:
+                    shutil.copyfile(SETTINGS_PATH, SETTINGS_PATH + ".bak")
+                except OSError:
+                    pass
+            os.replace(tmp, SETTINGS_PATH)
+        except OSError as e:
+            print(f"[settings] Couldn't save settings: {e}")

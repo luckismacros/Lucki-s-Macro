@@ -110,7 +110,12 @@ def dock(top_hwnd, slot_hwnd, state, log=print, compact=False):
         state.docked = client is not None
         return client
 
-    sl, st, sr, sb = window_rect(slot_hwnd)
+    try:
+        sl, st, sr, sb = window_rect(slot_hwnd)
+    except Exception as e:
+        # Invalid window handle while the panel is being (re)created - the caller retries.
+        print(f"[dock] Couldn't read the game slot's position ({e}).")
+        return None
     if sl <= -30000 or st <= -30000:
         return None
     (game_w, game_h), fits = fit_game_size(sr - sl, sb - st)

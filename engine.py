@@ -50,11 +50,12 @@ from modules.polling import poll_until, target
 from modules.portal_reward import pick_portal_reward
 from modules.expedition import ExpeditionRunner
 from modules.bossrush import BossRushRunner
-from modules.monster_clash import MonsterClashRunner, has_heli_prompt_crop
+from modules.monster_clash import MonsterClashRunner, reset_rift_state
 from modules.stats import SESSION
 from modules import health, notify, lobby
 from modules.fishing import start_fishing
 from modules import preset_core
+from modules import crash_report
 
 # How many times to retry reopening the portal picker and re-selecting after a
 # reward, before giving up on the run entirely. Confirmed live (2026-09-13) that a
@@ -108,6 +109,40 @@ def _autoplay_walk_preset_name(category_key):
     return config.PORTAL_AUTOPLAY_WALK_PRESET
 
 
+# Plain-language "what does this mean" for the stop reasons players actually see, so a
+# Discord message says more than a code like "MONSTER CLASH NAVIGATION FAILED".
+_STOP_EXPLANATIONS = (
+    ("CRASHED", "The macro hit an error in its own code - the crash message before this one has the details."),
+    ("TOO MANY DEFEATS", "Lost too many matches in a row (the limit is in Settings) - the team or macro can't win this."),
+    ("NO ROBLOX WINDOW", "Roblox wasn't running or couldn't be found - it may have crashed or closed."),
+    ("WINDOW PIN FAILED", "Couldn't resize/place the Roblox window, so clicks would land in the wrong places."),
+    ("NAVIGATION FAILED", "Couldn't get through the menus into the mode - a button the macro looks for wasn't found."),
+    ("STUCK", "Nothing the macro recognises showed up for too long - the screenshot shows what was on screen."),
+    ("MISSING", "A recording this mode needs is missing or empty - record it again."),
+    ("NEVER APPEARED", "A button the macro was waiting for never showed up."),
+    ("FAILED", "A step didn't work after several tries - the log lines below show which."),
+)
+
+
+def _explain_stop(reason):
+    reason = (reason or "").upper()
+    for key, text in _STOP_EXPLANATIONS:
+        if key in reason:
+            return text
+    return "The log lines below show what it was doing."
+
+
+def _mode_label(target, notify_fields):
+    """What's running, for crash/stop messages: the UI's own "Gamemode" field if it gave one."""
+    for f in notify_fields or ():
+        if f and f[0] == "Gamemode":
+            label = str(f[1])
+            extra = [str(v) for k, v, *_ in notify_fields if k in ("Mode", "Map", "Portal", "Expedition")]
+            return " - ".join([label] + extra)
+    name = getattr(target, "__name__", "") or "run"
+    return name.replace("run_", "").replace("_", " ").title()
+
+
 class BotEngine:
     def __init__(self, ui):
         self.ui = ui
@@ -117,6 +152,8 @@ class BotEngine:
         self.restart_reason = None
         self.run_started_at = None
         self.bot_thread = None
+        self.phase_text = ""
+        self.mode_label = ""
 
     # --- thin passthroughs, so the extracted method bodies below read exactly as
     # they did as BotGUI methods (self.log(...), self.set_phase(...)) -----------
@@ -124,6 +161,7 @@ class BotEngine:
         self.ui.log(message)
 
     def set_phase(self, text, color="#a8a8a8"):
+        self.phase_text = text
         self.ui.set_phase(text, color)
 
     # --- lifecycle ---------------------------------------------------------------
@@ -148,8 +186,14 @@ class BotEngine:
         self.restart_pending = False
         self.apply_run_behavior_settings()
         SESSION.start()
+        self._nav_failures = 0
+        # A fresh press of Start begins outside the rift; only a Never Stop restart (which
+        # doesn't come through here) carries "we're in the rift" over.
+        reset_rift_state()
         self.running = True
         self.run_started_at = time.time()
+        self.mode_label = _mode_label(target, notify_fields)
+        crash_report.run_started(self.mode_label)
 
         if notify.is_configured() and notify_fields is not None:
             user_settings = self.ui.get_user_settings()
@@ -510,20 +554,7 @@ class BotEngine:
 
                     self.log("Repeat Stage clicked. Restarting...")
         except Exception as e:
-            self.log(f"ERROR: Bot crashed unexpectedly - {e}")
-            # Without this a crash reached _cleanup() looking like a clean finish and was
-            # reported as a green "Run finished" right after the "Bot crashed" alert.
-            if not self.user_stop_requested:
-                config.STUCK_DETECTED = f"CRASHED ({type(e).__name__})"
-            # Best-effort screenshot of whatever was on screen at the moment it died -
-            # wrapped separately so a capture failure (e.g. Roblox already gone) can't
-            # swallow the crash notification itself.
-            try:
-                shot_bytes = health.jpg_bytes()
-            except Exception:
-                shot_bytes = None
-            notify.send(f"```{e}```", category="problems", title="Bot crashed",
-                        good=False, image_bytes=shot_bytes)
+            self._report_crash(e)
         finally:
             self._cleanup()
 
@@ -1051,20 +1082,7 @@ class BotEngine:
                 is_repeat_match = True
                 # loop back for another match
         except Exception as e:
-            self.log(f"ERROR: Bot crashed unexpectedly - {e}")
-            # Without this a crash reached _cleanup() looking like a clean finish and was
-            # reported as a green "Run finished" right after the "Bot crashed" alert.
-            if not self.user_stop_requested:
-                config.STUCK_DETECTED = f"CRASHED ({type(e).__name__})"
-            # Best-effort screenshot of whatever was on screen at the moment it died -
-            # wrapped separately so a capture failure (e.g. Roblox already gone) can't
-            # swallow the crash notification itself.
-            try:
-                shot_bytes = health.jpg_bytes()
-            except Exception:
-                shot_bytes = None
-            notify.send(f"```{e}```", category="problems", title="Bot crashed",
-                        good=False, image_bytes=shot_bytes)
+            self._report_crash(e)
         finally:
             self._cleanup()
 
@@ -1376,20 +1394,7 @@ class BotEngine:
                 played_this_pass += 1
                 index += 1
         except Exception as e:
-            self.log(f"ERROR: Bot crashed unexpectedly - {e}")
-            # Without this a crash reached _cleanup() looking like a clean finish and was
-            # reported as a green "Run finished" right after the "Bot crashed" alert.
-            if not self.user_stop_requested:
-                config.STUCK_DETECTED = f"CRASHED ({type(e).__name__})"
-            # Best-effort screenshot of whatever was on screen at the moment it died -
-            # wrapped separately so a capture failure (e.g. Roblox already gone) can't
-            # swallow the crash notification itself.
-            try:
-                shot_bytes = health.jpg_bytes()
-            except Exception:
-                shot_bytes = None
-            notify.send(f"```{e}```", category="problems", title="Bot crashed",
-                        good=False, image_bytes=shot_bytes)
+            self._report_crash(e)
         finally:
             self._cleanup()
 
@@ -1440,9 +1445,12 @@ class BotEngine:
                         self.log("Disconnected mid-navigation - reconnected. Retrying...")
                         continue
                     if not result:
+                        if self._retry_navigation():
+                            continue
                         self.log(f"Failed to navigate to {label}.")
                         _mark_failure("EXPEDITION NAVIGATION FAILED")
                         return
+                    self._nav_failures = 0
                     need_nav = False
                     stage = "PRESTART"
 
@@ -1481,17 +1489,7 @@ class BotEngine:
                 _mark_failure("EXPEDITION RUN FAILED")
                 return
         except Exception as e:
-            self.log(f"ERROR: Bot crashed unexpectedly - {e}")
-            # Without this a crash reached _cleanup() looking like a clean finish and was
-            # reported as a green "Run finished" right after the "Bot crashed" alert.
-            if not self.user_stop_requested:
-                config.STUCK_DETECTED = f"CRASHED ({type(e).__name__})"
-            try:
-                shot_bytes = health.jpg_bytes()
-            except Exception:
-                shot_bytes = None
-            notify.send(f"```{e}```", category="problems", title="Bot crashed",
-                        good=False, image_bytes=shot_bytes)
+            self._report_crash(e)
         finally:
             self._cleanup()
 
@@ -1528,9 +1526,12 @@ class BotEngine:
                         self.log("Disconnected mid-navigation - reconnected. Retrying...")
                         continue
                     if not result:
+                        if self._retry_navigation():
+                            continue
                         self.log("Failed to navigate to Boss Rush.")
                         _mark_failure("BOSS RUSH NAVIGATION FAILED")
                         return
+                    self._nav_failures = 0
                     need_nav = False
 
                 result = runner.play_cycle()
@@ -1572,25 +1573,19 @@ class BotEngine:
                 _mark_failure("BOSS RUSH RUN FAILED")
                 return
         except Exception as e:
-            self.log(f"ERROR: Bot crashed unexpectedly - {e}")
-            if not self.user_stop_requested:
-                config.STUCK_DETECTED = f"CRASHED ({type(e).__name__})"
-            try:
-                shot_bytes = health.jpg_bytes()
-            except Exception:
-                shot_bytes = None
-            notify.send(f"```{e}```", category="problems", title="Bot crashed",
-                        good=False, image_bytes=shot_bytes)
+            self._report_crash(e)
         finally:
             self._cleanup()
 
-    def run_monster_clash(self, walk_preset_name):
+    def run_monster_clash(self, mode, walk_preset_name):
         """
-        Farms the Monster Clash event: lobby -> stage -> (walk to the helicopter spot) ->
-        Auto Play + Start Game -> match -> helicopter window -> next stage (Repeat Stage,
-        or the helicopter's bonus stage and back). The flow itself lives in
-        modules/monster_clash.py; this owns the outer loop - same shape as
-        run_boss_rush() above.
+        Farms the Monster Clash event in one of two modes (config.MONSTER_CLASH_MODES):
+          "farm" - the game's Auto Start/Auto Retry repeat the stage; this keeps it alive.
+          "rift" - Auto Retry off: walk to the helicopter spot, Start Game, and after each
+                   match either E into the rift or Repeat Stage.
+        The flow itself lives in modules/monster_clash.py; this owns the outer loop - same
+        shape as run_boss_rush() above. Every restart goes back through navigate(), which
+        reads the screen to work out where the game actually is.
         """
         def _mark_failure(reason):
             if not config.STOP_REQUESTED and not config.STUCK_DETECTED:
@@ -1601,13 +1596,17 @@ class BotEngine:
             if not self.ui.focus_and_pin():
                 return
 
-            runner = MonsterClashRunner(walk_preset_name, set_phase=self.set_phase)
+            runner = MonsterClashRunner(mode, walk_preset_name, set_phase=self.set_phase)
             self.ui.calibrate_ui_scale(capture_screen())
-            self.log(f"Monster Clash: Auto Play, helicopter walk '{walk_preset_name}'"
-                     f"{'' if has_heli_prompt_crop() else ' (no helicopter prompt crop - E is pressed blind)'}.")
+            if mode == "rift":
+                self.log(f"Monster Clash - Rift hunt, helicopter walk '{walk_preset_name}'. The game's Auto Start "
+                         f"and Auto Retry must be OFF.")
+            else:
+                self.log("Monster Clash - Farm. The game's Auto Start and Auto Retry should be ON; the macro "
+                         "keeps the run alive (reconnects, anti-AFK) and counts the matches.")
 
             need_nav = True
-            in_match = False
+            step = None                 # what comes next: "start", "match" or "after"
             while not config.STOP_REQUESTED:
                 if need_nav:
                     result = runner.navigate()
@@ -1615,56 +1614,142 @@ class BotEngine:
                         self.log("Disconnected mid-navigation - reconnected. Retrying...")
                         continue
                     if not result:
-                        self.log("Failed to navigate to Monster Clash.")
+                        if self._retry_navigation():
+                            continue
+                        if config.STOP_REQUESTED:
+                            return
+                        self.log("Failed to get into Monster Clash 3 times in a row.")
                         _mark_failure("MONSTER CLASH NAVIGATION FAILED")
                         return
+                    self._nav_failures = 0
                     need_nav = False
-                    in_match = result == "IN_MATCH"
+                    if result == "IN_MATCH":
+                        step = "match"
+                    elif result == "ENDED":
+                        step = "after"
+                    elif result == "RIFT_PROMPT":
+                        taken = runner.take_rift()
+                        if taken is False:
+                            return
+                        # E didn't take: the end-of-match handling (rift_next) tries again
+                        # and falls back to Repeat Stage, instead of waiting on a Start Game
+                        # that only comes if the rift actually started.
+                        step = "start" if taken else "after"
+                    else:
+                        step = "start"
 
-                if not in_match:
+                if step == "start":
                     result = runner.prepare_and_start()
                     if result == "RECONNECTED":
-                        self.log("Disconnected before the match started - reconnected. Redoing navigation...")
+                        self.log("Disconnected before the match started - reconnected. Rejoining...")
                         need_nav = True
                         continue
                     if not result:
                         _mark_failure("MONSTER CLASH START FAILED")
                         return
-                in_match = False
+                    step = "match"
 
-                result = runner.play_match()
-                if result == "RECONNECTED":
-                    self.log("Disconnected mid-match - reconnected. Redoing navigation...")
-                    need_nav = True
-                    continue
-                if not result:
-                    _mark_failure("MONSTER CLASH MATCH FAILED")
-                    return
-                if self._limit_reached():
-                    # Repeat Stage is left on screen, same as every other mode, so a
-                    # queue's next step can Exit from it.
-                    return
+                if step == "match":
+                    result = runner.play_match()
+                    if result == "RECONNECTED":
+                        self.log("Disconnected mid-match - reconnected. Rejoining...")
+                        need_nav = True
+                        continue
+                    if not result:
+                        _mark_failure("MONSTER CLASH MATCH FAILED")
+                        return
+                    if self._limit_reached():
+                        return
+                    step = "after"
 
-                result = runner.continue_after_match()
-                if result == "RECONNECTED":
-                    self.log("Disconnected after the match - reconnected. Redoing navigation...")
-                    need_nav = True
-                    continue
-                if not result:
-                    _mark_failure("MONSTER CLASH NEXT STAGE FAILED")
-                    return
+                if step == "after":
+                    result = runner.farm_next() if mode == "farm" else runner.rift_next()
+                    if result == "RECONNECTED":
+                        self.log("Disconnected after the match - reconnected. Rejoining...")
+                        need_nav = True
+                        continue
+                    if result == "LOST":
+                        need_nav = True
+                        continue
+                    if not result:
+                        _mark_failure("MONSTER CLASH NEXT STAGE FAILED")
+                        return
+                    # Farm: the next match is already running (Auto Retry) or was just
+                    # started. Rift: a stage with Start Game to press is next.
+                    step = "match" if mode == "farm" else "start"
         except Exception as e:
-            self.log(f"ERROR: Bot crashed unexpectedly - {e}")
-            if not self.user_stop_requested:
-                config.STUCK_DETECTED = f"CRASHED ({type(e).__name__})"
-            try:
-                shot_bytes = health.jpg_bytes()
-            except Exception:
-                shot_bytes = None
-            notify.send(f"```{e}```", category="problems", title="Bot crashed",
-                        good=False, image_bytes=shot_bytes)
+            self._report_crash(e)
         finally:
             self._cleanup()
+
+    NAV_ATTEMPTS = 3
+
+    def _retry_navigation(self):
+        """
+        After a failed trip through the menus: True (after a short pause) if it's worth
+        another go. A single slow menu, a popup that covered a button for a moment or a
+        lobby that hadn't finished loading used to end the whole run on the first miss.
+        False once NAV_ATTEMPTS have failed in a row, or the run was stopped/halted.
+        """
+        if config.STOP_REQUESTED:
+            return False
+        self._nav_failures = getattr(self, "_nav_failures", 0) + 1
+        if self._nav_failures >= self.NAV_ATTEMPTS:
+            self._nav_failures = 0
+            return False
+        self.log(f"Couldn't get through the menus (attempt {self._nav_failures}/{self.NAV_ATTEMPTS}) - "
+                 f"trying again in 5s from wherever the screen is now...")
+        waited = 0.0
+        while waited < 5.0 and not config.STOP_REQUESTED:
+            time.sleep(0.5)
+            waited += 0.5
+        return not config.STOP_REQUESTED
+
+    def _context_fields(self):
+        """Mode / what it was doing / how long - shared by every problem message."""
+        return crash_report.crash_fields(self.mode_label, self.phase_text, self.run_started_at)
+
+    def _last_lines_field(self):
+        block = crash_report.last_lines_block()
+        return [("Last log lines", block, False)] if block else []
+
+    def _report_crash(self, e):
+        """
+        One place for "the run crashed": the FULL traceback goes to the log (it used to be
+        only the message), the run is marked as a failure (so Never Stop restarts it and
+        it never reads as a clean finish), and Discord gets what's needed to fix it - the
+        error, the exact file:line in this app's code, what the bot was doing, the last
+        log lines and a screenshot.
+        """
+        import traceback
+        # Taken BEFORE the traceback is logged, so it shows what the bot was doing rather
+        # than the traceback itself (which is already summarised in the message body).
+        block = crash_report.last_lines_block()
+        print("[crash] " + "".join(traceback.format_exception(type(e), e, e.__traceback__)).rstrip())
+        info = crash_report.describe(e)
+        self.log(f"ERROR: the bot crashed - {info['type']}: {info['message']}"
+                 + (f" (at {info['where']})" if info["where"] else ""))
+        if not self.user_stop_requested:
+            config.STUCK_DETECTED = f"CRASHED ({info['type']})"
+        try:
+            shot_bytes = health.jpg_bytes()
+        except Exception:
+            shot_bytes = None
+        try:
+            never_stop = bool(self.ui.get_user_settings().get("never_stop"))
+            body = crash_report.format_for_discord(info)
+            if never_stop and not self.user_stop_requested:
+                body += "\n\nNever Stop is on - the run will restart by itself."
+            else:
+                body += "\n\nThe run has stopped."
+            fields = crash_report.crash_fields(self.mode_label, self.phase_text, self.run_started_at,
+                                               SESSION.matches)
+            if block:
+                fields.append(("Last log lines", block, False))
+            notify.send(body, category="problems", title=f"Bot crashed: {info['type']}", good=False,
+                        fields=fields, image_bytes=shot_bytes)
+        except Exception as notify_e:
+            print(f"[notify] Could not send the crash message: {notify_e}")
 
     def _supervised_run(self, target, args):
         """
@@ -1693,18 +1778,7 @@ class BotEngine:
                 # console=False, so there is no traceback anywhere, not even in the
                 # log file - the bot just stops with nothing to explain why. Exactly
                 # what "it randomly stopped" looks like from outside.
-                self.log(f"ERROR: Bot crashed unexpectedly - {e}")
-                if not self.user_stop_requested:
-                    config.STUCK_DETECTED = f"CRASHED ({type(e).__name__})"
-                try:
-                    shot_bytes = health.jpg_bytes()
-                except Exception:
-                    shot_bytes = None
-                try:
-                    notify.send(f"```{e}```", category="problems", title="Bot crashed",
-                                good=False, image_bytes=shot_bytes)
-                except Exception as notify_e:
-                    print(f"[notify] Could not send the crash message: {notify_e}")
+                self._report_crash(e)
                 self._cleanup()
             if not self.restart_pending:
                 return
@@ -1720,10 +1794,10 @@ class BotEngine:
                      f"(restart #{SESSION.restarts}).")
             self.set_phase(f"RESTARTING IN {delay}s - {reason}", "#ffb300")
             try:
-                notify.send(f"**{reason}**\nNever Stop is on - restarting in {delay}s "
+                notify.send(f"**{reason}**\n{_explain_stop(reason)}\nNever Stop is on - restarting in {delay}s "
                             f"(restart #{SESSION.restarts}).",
-                            category="problems", title="Problem - restarting the run", good=False,
-                            fields=SESSION.notify_fields(),
+                            category="problems", title=f"Restarting: {reason}", good=False,
+                            fields=self._context_fields() + SESSION.notify_fields() + self._last_lines_field(),
                             image_bytes=self._latest_debug_jpg() or health.jpg_bytes())
             except Exception as e:
                 print(f"[notify] Could not send the restart message: {e}")
@@ -1792,6 +1866,7 @@ class BotEngine:
         # for the whole time the UI is open, not flicker away every time the bot
         # stops. Roblox only gets its title bar back when the app itself closes.
 
+        crash_report.run_ended()
         self.running = False
         self.ui.reset_buttons()
 
@@ -1823,10 +1898,12 @@ class BotEngine:
         fields = SESSION.notify_fields()
 
         if stuck_reason:
-            body = f"**{stuck_reason}**\nSomething stopped this run on its own - see the fields below and the attached screenshot for what it was looking at."
+            body = (f"**{stuck_reason}**\n{_explain_stop(stuck_reason)}\nThe run has stopped - turn on Never Stop "
+                    f"in Settings to have it restart by itself.")
             image = self._latest_debug_jpg() or health.jpg_bytes()
-            notify.send(body, category="problems", title="Run stopped on its own",
-                        good=False, fields=fields, image_bytes=image)
+            notify.send(body, category="problems", title=f"Run stopped: {stuck_reason}",
+                        good=False, fields=self._context_fields() + fields + self._last_lines_field(),
+                        image_bytes=image)
         elif stopped_by_user:
             notify.send("Stopped by request." if not fields else "Stopped by request - here's what it got through.",
                         category="lifecycle", title="Run stopped", good=None, fields=fields,

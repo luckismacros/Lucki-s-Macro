@@ -50,9 +50,22 @@ _log_path = logger.install(_base_dir)
 def _log_uncaught_exception(exc_type, exc_value, exc_tb):
     import traceback
     print("[uncaught] " + "".join(traceback.format_exception(exc_type, exc_value, exc_tb)).rstrip())
+    try:
+        from modules import crash_report, notify
+        info = crash_report.describe(exc_value)
+        notify.send(crash_report.format_for_discord(info) + "\n(in the app window - the run itself may carry on)",
+                    category="problems", title=f"App error: {info['type']}", good=False,
+                    fields=[("Last log lines", crash_report.last_lines_block(8), False)])
+    except Exception:
+        pass
 
 
 sys.excepthook = _log_uncaught_exception
+
+# Background threads and native (non-Python) crashes - see modules/crash_report.py.
+from modules import crash_report  # noqa: E402
+
+crash_report.install()
 
 # Qt would try to set DPI awareness itself and warn that it's already set - it is, to
 # the same per-monitor v2 mode Qt wants, so the warning is noise.

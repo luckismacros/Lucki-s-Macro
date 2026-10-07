@@ -1242,19 +1242,32 @@ class BossRushPage(ModePage):
 
 class MonsterClashPage(ModePage):
     """
-    The Monster Clash event: one stage, the game's own Auto Play, plus a walk to where
-    the helicopter lands (it can show up after any match and leads to a bonus stage).
-    The walk is the only recording - see modules/monster_clash.py.
+    The Monster Clash event, two ways (config.MONSTER_CLASH_MODES):
+      Farm      - the game's Auto Start/Auto Retry on; the macro only keeps it alive.
+      Rift hunt - both off; walk to the helicopter's spot, E into the rift when it shows,
+                  Repeat Stage otherwise. Needs the walk recording.
+    See modules/monster_clash.py.
     """
     key = "monsterclash"
+
+    _MODE_HINTS = {
+        "farm": "Turn the game's Auto Start and Auto Retry ON. The stage repeats by itself; the macro "
+                "just keeps the run going - reconnects, stops you getting kicked for being idle, and "
+                "rejoins if you're sent back to the lobby. No walking, no rifts.",
+        "rift": "Turn the game's Auto Start and Auto Retry OFF - the rift (helicopter) only spawns then. "
+                "Before each match the macro walks to the helicopter's landing spot. When a match ends it "
+                "presses E if 'Start Rift' shows up, or Repeat Stage if not. After a rift it closes the "
+                "victory panel and rejoins through the small Events button.",
+    }
 
     def __init__(self, host):
         super().__init__(host)
         c1 = self.add_card(StepCard(1, "Monster Clash"))
-        c1.body.addWidget(label("Events → Monster Clash → Play Event → Choose Stage → Select Stage → Start, "
-                                 "then the game's Auto Play does the fighting. After every match the bot "
-                                 "waits on the helicopter's landing spot and presses E if one comes, "
-                                 "plays the bonus stage the same way, and carries on.", "hint", wrap=True))
+        self.mode = Segmented([(k, v.split(" (")[0]) for k, v in config.MONSTER_CLASH_MODES.items()], "rift")
+        self.mode.changed.connect(self._on_mode)
+        c1.body.addWidget(self.mode)
+        self.mode_hint = label("", "hint", wrap=True)
+        c1.body.addWidget(self.mode_hint)
         c1.set_done(True)
 
         self.walk_picker = self.add_card(PresetPicker(host, 2, "Walk to the helicopter", self._walk_slot,
@@ -1264,6 +1277,13 @@ class MonsterClashPage(ModePage):
                                               "Don't place anything.", "hint", wrap=True))
         self.walk_picker.changed.connect(self.emit_changed)
         self.finish()
+        self._on_mode()
+
+    def _on_mode(self, *_):
+        mode = self.mode.value()
+        self.mode_hint.setText(self._MODE_HINTS.get(mode, ""))
+        self.walk_picker.setVisible(mode == "rift")
+        self.emit_changed()
 
     def _walk_slot(self):
         return config.MONSTER_CLASH_PRESET_LOCATION, config.MONSTER_CLASH_WALK_VARIANT
@@ -1272,26 +1292,41 @@ class MonsterClashPage(ModePage):
         self.walk_picker.refresh_list(force=True)
 
     def checks(self):
+        if self.mode.value() != "rift":
+            return []
         return [("Helicopter walk", *self.walk_picker.check())]
 
     def run_spec(self):
+        mode = self.mode.value()
+        mode_label = config.MONSTER_CLASH_MODES[mode].split(" (")[0]
+        if mode != "rift":
+            return "run_monster_clash", (mode, None), [("Gamemode", "Monster Clash"), ("Mode", mode_label)]
         name = self.walk_picker.recording_name()
         if not name:
             raise ValueError("Record the walk to the helicopter first: click New on it, then Record (F8) in Roblox.")
         loc, var = self.walk_picker.slot()
         if not preset_core.load_actions(loc, var, name):
             raise ValueError(f"The helicopter walk '{pretty(name)}' has no steps yet. Press Record (F8) in Roblox first.")
-        return "run_monster_clash", (name,), [("Gamemode", "Monster Clash"), ("Helicopter walk", name)]
+        return "run_monster_clash", (mode, name), [("Gamemode", "Monster Clash"), ("Mode", mode_label),
+                                                    ("Helicopter walk", name)]
 
     def summary(self):
-        return f"Monster Clash - Auto Play, helicopter walk '{pretty(self.walk_picker.recording_name())}'"
+        if self.mode.value() != "rift":
+            return "Monster Clash - Farm (Auto Retry on)"
+        return f"Monster Clash - Rift hunt, helicopter walk '{pretty(self.walk_picker.recording_name())}'"
 
     def state(self):
-        return {"walk": self.walk_picker.state()}
+        return {"mode": self.mode.value(), "walk": self.walk_picker.state()}
 
     def restore(self, data):
         if "walk" in data:
             self.walk_picker.restore(data["walk"])
+        # Saved before the two modes existed, the only mode was Auto Retry ON - that's Farm
+        # now, so an old saved page / queue step keeps behaving the way its game is set up.
+        mode = data.get("mode", "farm") if data else None
+        if mode in config.MONSTER_CLASH_MODES:
+            self.mode.set_value(mode, animate=False)
+        self._on_mode()
 
 
 class OthersPage(ModePage):

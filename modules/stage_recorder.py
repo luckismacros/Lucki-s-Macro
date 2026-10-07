@@ -213,16 +213,16 @@ class StageRecorder:
                   f"kept the existing {filename} as it was.")
             return
 
-        with open(filename, 'w') as f:
-            json.dump({
-                "location": self.current_location,
-                "variant": self.current_variant,
-                # Recorded against this reference size, so a preset carries the frame it
-                # was authored in rather than leaving a future reader to guess.
-                "reference": [config.REFERENCE_WIDTH, config.REFERENCE_HEIGHT],
-                "actions": self.actions
-            }, f, indent=4)
-            
+        from modules.preset_core import write_json_atomic
+        write_json_atomic(filename, {
+            "location": self.current_location,
+            "variant": self.current_variant,
+            # Recorded against this reference size, so a preset carries the frame it
+            # was authored in rather than leaving a future reader to guess.
+            "reference": [config.REFERENCE_WIDTH, config.REFERENCE_HEIGHT],
+            "actions": self.actions
+        })
+
         print(f"\n[StageRecorder] ⏹️ RECORDING SAVED: {len(self.actions)} actions to {filename}.")
 
     def start(self):

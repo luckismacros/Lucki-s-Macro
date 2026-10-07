@@ -65,6 +65,10 @@ def play_preset(location_key, variant_key, preset_name, skip_movement=False, mov
     except FileNotFoundError:
         print(f"[Player] No preset found at {filename}. Please record one first.")
         return False
+    except (ValueError, OSError) as e:
+        # A damaged file (a save cut off before saves were atomic) used to crash the run.
+        print(f"[Player] The recording {filename} can't be read ({e}) - re-record it.")
+        return False
 
     actions = data.get("actions", [])
     if not _has_playable(actions, movement_only):
@@ -101,6 +105,9 @@ def play_preset(location_key, variant_key, preset_name, skip_movement=False, mov
         print(f"[Player] Already at the recorded spot - skipping the walk ({time_shift:.1f}s of it).")
 
     print(f"[Player] Loaded {len(actions)} actions. Starting playback...")
+    # Keys (unit hotkeys, the walk) only reach Roblox while it has focus.
+    from input_controller import ensure_roblox_focus
+    ensure_roblox_focus()
     start_time = time.time() - time_shift
     # Seeded from start_time, not 0.0: with 0.0, `now - last_disconnect_check` is
     # always huge on the very first loop tick, so the check below used to fire

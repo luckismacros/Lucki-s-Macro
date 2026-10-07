@@ -284,6 +284,27 @@ def _post(payload, image_bytes=None, image_name="screenshot.jpg"):
         with urllib.request.urlopen(request, timeout=_TIMEOUT):
             pass
     except urllib.error.HTTPError as e:
+        if e.code == 429:
+            # Rate limited (a burst - a crash, then the restart notice, then a screenshot):
+            # Discord says how long to wait. One retry after that instead of dropping it -
+            # the crash message is exactly the one that must not go missing.
+            try:
+                wait = min(15.0, max(0.5, float(e.headers.get("Retry-After", "2"))))
+            except Exception:
+                wait = 2.0
+            print(f"[notify] Discord rate limit - resending in {wait:.1f}s.")
+            time.sleep(wait)
+            try:
+                retry = urllib.request.Request(
+                    _webhook, data=data,
+                    headers={"Content-Type": content_type, "User-Agent": "MacroSlop/1.0"},
+                )
+                with urllib.request.urlopen(retry, timeout=_TIMEOUT):
+                    pass
+                return
+            except Exception:
+                print("[notify] Still rate limited - message dropped, run continues.")
+                return
         print(f"[notify] Discord rejected the message (HTTP {e.code}). "
               f"If this is 401/404 the webhook URL is wrong or was deleted.")
         # A malformed/oversized image is the one failure worth retrying without it -

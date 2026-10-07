@@ -144,15 +144,30 @@ def load_actions(location_key, variant_key, name):
         return None
 
 
+def write_json_atomic(path, data, indent=4):
+    """
+    Writes JSON to a temp file and swaps it in, so a crash, kill or power cut mid-write
+    leaves the previous version intact instead of a half-written (unloadable) recording.
+    """
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=indent)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
 def save_actions(location_key, variant_key, name, actions):
     os.makedirs(PRESET_DIR, exist_ok=True)
-    with open(preset_path(location_key, variant_key, name), "w") as f:
-        json.dump({
-            "location": location_key,
-            "variant": variant_key,
-            "reference": [config.REFERENCE_WIDTH, config.REFERENCE_HEIGHT],
-            "actions": actions,
-        }, f, indent=4)
+    write_json_atomic(preset_path(location_key, variant_key, name), {
+        "location": location_key,
+        "variant": variant_key,
+        "reference": [config.REFERENCE_WIDTH, config.REFERENCE_HEIGHT],
+        "actions": actions,
+    })
 
 
 # How long a gap between two actions has to be before it shows as its own "wait" row.
