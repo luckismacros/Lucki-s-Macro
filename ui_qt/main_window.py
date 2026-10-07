@@ -46,7 +46,8 @@ from .widgets import (
 NAV = [
     ("story", "Story", "story"), ("raids", "Raids", "raids"), ("challenges", "Challenges", "challenges"),
     ("portals", "Portals", "portals"), ("expeditions", "Expeditions", "expeditions"),
-    ("bossrush", "Boss Rush", "bossrush"), ("queue", "Queue", "list"),
+    ("bossrush", "Boss Rush", "bossrush"), ("monsterclash", "Monster Clash", "monsterclash"),
+    ("queue", "Queue", "list"),
     ("others", "Others", "others"),
 ]
 SIDEBAR_WIDTH = 320

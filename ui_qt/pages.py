@@ -1238,6 +1238,62 @@ class BossRushPage(ModePage):
                 picker.restore(saved)
 
 
+# ----------------------------------------------------------------------------- monster clash
+
+class MonsterClashPage(ModePage):
+    """
+    The Monster Clash event: one stage, the game's own Auto Play, plus a walk to where
+    the helicopter lands (it can show up after any match and leads to a bonus stage).
+    The walk is the only recording - see modules/monster_clash.py.
+    """
+    key = "monsterclash"
+
+    def __init__(self, host):
+        super().__init__(host)
+        c1 = self.add_card(StepCard(1, "Monster Clash"))
+        c1.body.addWidget(label("Events → Monster Clash → Play Event → Choose Stage → Select Stage → Start, "
+                                 "then the game's Auto Play does the fighting. After every match the bot "
+                                 "waits on the helicopter's landing spot and presses E if one comes, "
+                                 "plays the bonus stage the same way, and carries on.", "hint", wrap=True))
+        c1.set_done(True)
+
+        self.walk_picker = self.add_card(PresetPicker(host, 2, "Walk to the helicopter", self._walk_slot,
+                                                       allow_auto=False, trailing_text="walk only"))
+        self.walk_picker.body.addWidget(label("Record it from where the stage spawns you: Record (F8), walk "
+                                              "with W/A/S/D to the X where the helicopter lands, F8 again. "
+                                              "Don't place anything.", "hint", wrap=True))
+        self.walk_picker.changed.connect(self.emit_changed)
+        self.finish()
+
+    def _walk_slot(self):
+        return config.MONSTER_CLASH_PRESET_LOCATION, config.MONSTER_CLASH_WALK_VARIANT
+
+    def on_shown(self):
+        self.walk_picker.refresh_list(force=True)
+
+    def checks(self):
+        return [("Helicopter walk", *self.walk_picker.check())]
+
+    def run_spec(self):
+        name = self.walk_picker.recording_name()
+        if not name:
+            raise ValueError("Record the walk to the helicopter first: click New on it, then Record (F8) in Roblox.")
+        loc, var = self.walk_picker.slot()
+        if not preset_core.load_actions(loc, var, name):
+            raise ValueError(f"The helicopter walk '{pretty(name)}' has no steps yet. Press Record (F8) in Roblox first.")
+        return "run_monster_clash", (name,), [("Gamemode", "Monster Clash"), ("Helicopter walk", name)]
+
+    def summary(self):
+        return f"Monster Clash - Auto Play, helicopter walk '{pretty(self.walk_picker.recording_name())}'"
+
+    def state(self):
+        return {"walk": self.walk_picker.state()}
+
+    def restore(self, data):
+        if "walk" in data:
+            self.walk_picker.restore(data["walk"])
+
+
 class OthersPage(ModePage):
     key = "others"
 
@@ -1407,5 +1463,6 @@ class QueuePage(ModePage):
 PAGE_CLASSES = {
     "story": StoryPage, "raids": RaidsPage, "challenges": ChallengesPage,
     "portals": PortalsPage, "expeditions": ExpeditionsPage, "bossrush": BossRushPage,
+    "monsterclash": MonsterClashPage,
     "others": OthersPage, "queue": QueuePage,
 }

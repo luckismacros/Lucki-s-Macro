@@ -794,12 +794,13 @@ class BossRushRunner:
         return tx, ty
 
     # --- starting over from spawn ---------------------------------------------------
-    def _reset_to_spawn(self):
+    def _reset_to_spawn(self, halt=True):
         """
         Settings (top-bar gear) -> search "teleport" -> Teleport To Spawn, then closes the
         panel and re-anchors the camera - puts the character back on the spot every gate
         walk was recorded from. True / False / "RECONNECTED"; a menu that can't be worked
-        stops the run.
+        stops the run - or, with halt=False (Monster Clash, where a missed reset only
+        costs a helicopter), returns None instead and leaves the run going.
         """
         self._phase("RESET TO SPAWN", "#f9a825")
         for attempt in (1, 2, 3):
@@ -844,7 +845,7 @@ class BossRushRunner:
 
         path = health.save_debug_screenshot("bossrush_reset_to_spawn_failed")
         print(f"[BossRush] Couldn't teleport back to spawn (screen saved: {path}).")
-        return _halt("BOSS RUSH COULD NOT RESET TO SPAWN")
+        return _halt("BOSS RUSH COULD NOT RESET TO SPAWN") if halt else None
 
     def _search_for_teleport(self):
         """
