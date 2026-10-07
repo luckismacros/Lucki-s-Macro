@@ -19,15 +19,23 @@ import os
 import sys
 import threading
 import logging
+import collections
+import time
 from logging.handlers import RotatingFileHandler
 
 LOG_DIR_NAME = "logs"
 LOG_FILE_NAME = "macro_slop.log"
-MAX_BYTES = 2 * 1024 * 1024  # 2 MB per file
-BACKUP_COUNT = 3             # keep macro_slop.log.1 .. .3
+# 5 MB x 9 files = ~45 MB. It used to be 2 MB x 4: the per-tick "[vision]" lines fill 2 MB
+# in an hour or two, so by the morning after an overnight run the part that explained why
+# it stopped had already been rotated away.
+MAX_BYTES = 5 * 1024 * 1024  # 5 MB per file
+BACKUP_COUNT = 8             # keep macro_slop.log.1 .. .8
 
 _lock = threading.Lock()
 _gui_sink = None
+# The last lines printed, for crash reports (modules/crash_report.py) - "what was it
+# doing right before" is the part of a crash a Discord message most needs.
+_recent = collections.deque(maxlen=60)
 _log_path = None
 _installed = False
 
@@ -64,6 +72,7 @@ class _Tee:
     def _emit(self, line):
         if not line.strip():
             return
+        _recent.append(f"{time.strftime('%H:%M:%S')}  {line}")
 
         try:
             self._logger.info(line)
@@ -141,6 +150,7 @@ def log_to_file(message):
     """
     if not _installed or not message or not str(message).strip():
         return
+    _recent.append(f"{time.strftime('%H:%M:%S')}  {message}")
     try:
         logging.getLogger("macro_slop").info(str(message))
     except Exception:
@@ -159,3 +169,13 @@ def set_gui_sink(callback):
 
 def get_log_path():
     return _log_path
+
+
+def recent_lines(n=15, skip_vision=True):
+    """
+    The last n printed lines (newest last), for crash reports. The per-tick "[vision] ...
+    best confidence" lines are left out by default - they're most of the volume and say
+    nothing about what the bot was actually doing.
+    """
+    lines = [l for l in list(_recent) if not (skip_vision and "[vision]" in l)]
+    return lines[-n:]

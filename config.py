@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "2.8"
+APP_VERSION = "2.9"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -1361,50 +1361,53 @@ BOSSRUSH_STUCK_TIMEOUT = 1500.0
 
 # --- Monster Clash (event) ---
 # Lobby -> Events -> Monster Clash -> Play Event -> Play - Choose Stage -> Select Stage
-# -> Start, then on the stage: Auto Play on, walk to the helicopter's landing spot, Start
-# Game. When a match ends a helicopter can land on that spot; pressing E at it takes the
-# character to a bonus stage on the same map (Auto Play + Start Game again), and that
-# bonus stage then sends it back to the normal one. See modules/monster_clash.py.
+# -> Start, then the game's Auto Play does the fighting. Two ways to run it (see
+# modules/monster_clash.py):
+#   "farm" - the game's Auto Start + Auto Retry ON: the stage repeats by itself, so the
+#            bot only keeps the run alive (reconnects, anti-AFK, a Start Game / Repeat
+#            Stage click if one ever shows).
+#   "rift" - Auto Start + Auto Retry OFF (the rift can only spawn then): walk to the spot
+#            before each match; at the end, E at "Start Rift" if it showed, else Repeat
+#            Stage. The rift's own end (victory panel) is left via its X and the in-game
+#            small Events button, which leads into the same menus.
 #
-# The crops were captured from a 1920x1080 window and rescaled by 1600/1919 - the factor
-# that best matched the Events button on a real 1600x900 lobby frame (0.89 after
-# rescaling); the untouched captures are in monster_clash/_original_1920x1080/.
-# Re-crop with tools/template_capture.py while pinned
-# if one of them misses - the log prints the confidence it reached.
+# The crops were captured at 1920x1080-ish and rescaled by 1600/1919 - measured: this
+# game's UI in those captures is drawn 1.20-1.22x the bot's 1600x900 frame (Auto Play
+# and Game Results, both already-correct 1600x900 crops, matched best at that size).
+# Choose Stage fit best at 0.86 on a real frame and was cut at that. The untouched
+# captures are in monster_clash/_original_1920x1080/.
 MONSTER_CLASH_DIR = "assets/templates/monster_clash"
 MONSTER_CLASH_EVENTS_BTN = f"{MONSTER_CLASH_DIR}/events.png"           # the lobby's Events button (left column)
+MONSTER_CLASH_EVENTS_SMALL_BTN = f"{MONSTER_CLASH_DIR}/events_small.png"  # the same, as an icon in the in-game bottom bar
 MONSTER_CLASH_CARD = f"{MONSTER_CLASH_DIR}/monster_clash.png"          # "Battle Event / Monster Clash" card
 MONSTER_CLASH_PLAY_EVENT_BTN = f"{MONSTER_CLASH_DIR}/play_event.png"
 MONSTER_CLASH_CHOOSE_STAGE_BTN = f"{MONSTER_CLASH_DIR}/choose_stage.png"
 MONSTER_CLASH_SELECT_STAGE_BTN = f"{MONSTER_CLASH_DIR}/select_stage.png"
 MONSTER_CLASH_START_BTN = f"{MONSTER_CLASH_DIR}/start.png"             # the party screen's Start
-# OPTIONAL: a crop of the helicopter's "E" prompt. Without it, once the helicopter is
-# detected (see MONSTER_CLASH_RETRY_GRACE) E is pressed blind every
-# MONSTER_CLASH_BLIND_E_INTERVAL until the bonus stage loads; with it, only at the prompt.
-MONSTER_CLASH_HELI_PROMPT = f"{MONSTER_CLASH_DIR}/heli_prompt.png"
+# "E / Monster's Rift / Start Rift" - the helicopter's prompt at the end of a match.
+# 0.99 on its own screen, <= 0.33 on every other frame checked.
+MONSTER_CLASH_START_RIFT = f"{MONSTER_CLASH_DIR}/start_rift.png"
+# The red X on the rift's victory panel.
+MONSTER_CLASH_CLOSE_GUI_BTN = f"{MONSTER_CLASH_DIR}/close_gui.png"
 
-for _path in (MONSTER_CLASH_EVENTS_BTN, MONSTER_CLASH_CARD, MONSTER_CLASH_PLAY_EVENT_BTN,
-              MONSTER_CLASH_CHOOSE_STAGE_BTN, MONSTER_CLASH_SELECT_STAGE_BTN, MONSTER_CLASH_START_BTN):
-    # Rescaled crops (see above): Events scored 0.89 on a real frame, and nothing tested
-    # reached 0.33 on a lobby frame or 0.50 on one of the other green buttons.
+for _path in (MONSTER_CLASH_EVENTS_BTN, MONSTER_CLASH_EVENTS_SMALL_BTN, MONSTER_CLASH_CARD,
+              MONSTER_CLASH_PLAY_EVENT_BTN, MONSTER_CLASH_CHOOSE_STAGE_BTN, MONSTER_CLASH_SELECT_STAGE_BTN,
+              MONSTER_CLASH_START_BTN, MONSTER_CLASH_START_RIFT, MONSTER_CLASH_CLOSE_GUI_BTN):
+    # Rescaled crops: real sightings 0.79-0.99, nothing else checked reached 0.50 (the
+    # green menu buttons look alike crop-to-crop, up to 0.76 - see _next_is_up).
     TEMPLATE_THRESHOLDS.setdefault(_path, 0.70)
-TEMPLATE_THRESHOLDS.setdefault(MONSTER_CLASH_HELI_PROMPT, 0.65)
 
-# The walk to the helicopter's landing spot - walk only, recorded from the stage's spawn
-# with the camera anchored, the same way as Boss Rush's gate walks:
-# presets/monsterclash_heli_walk_<name>.json. A default can ship in assets/default_presets/.
+MONSTER_CLASH_MODES = {
+    "farm": "Farm (Auto Retry on)",
+    "rift": "Rift hunt (Auto Retry off)",
+}
+
+# Rift hunt's walk to the helicopter's landing spot - walk only, recorded from the stage's
+# spawn: presets/monsterclash_heli_walk_<name>.json (shipped default: monster_rush_default).
 MONSTER_CLASH_PRESET_LOCATION = "monsterclash"
 MONSTER_CLASH_WALK_VARIANT = "heli_walk"
 
-# With the game's Auto Retry on, the next round's Start Game is back within this many
-# seconds of a match ending - unless the helicopter has come, which holds Auto Retry.
-# So "no Start Game after this long" is how the helicopter is detected.
-MONSTER_CLASH_RETRY_GRACE = 3.0
-# Once the helicopter is assumed: how long to keep pressing E (it has to fly in and land)
-# before giving up on it and just waiting for the next stage.
-MONSTER_CLASH_HELI_WAIT = 90.0
-# How often E is pressed while waiting for it.
-MONSTER_CLASH_BLIND_E_INTERVAL = 1.5
-# A Start Game seen this soon after starting a match is that match's own button fading
-# out, not Auto Retry's next one.
+# Rift hunt, after a match: how long to watch for "Start Rift" before taking Repeat Stage.
+MONSTER_CLASH_RIFT_WAIT = 12.0
+# A Start Game seen this soon after starting a match is that match's own button fading out.
 MONSTER_CLASH_MIN_MATCH = 20.0

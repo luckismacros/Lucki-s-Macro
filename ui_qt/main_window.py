@@ -443,6 +443,16 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(900, self.open_welcome)
         QTimer.singleShot(600, self._auto_dock)
         QTimer.singleShot(2000, lambda: self.check_for_updates(silent=True))
+        # Did the last run end without stopping properly (crash, killed, PC slept)? Says so
+        # in the log and on Discord - see modules/crash_report.py.
+        QTimer.singleShot(1500, self._check_previous_session)
+
+    def _check_previous_session(self):
+        from modules import crash_report
+        try:
+            crash_report.check_previous_session()
+        except Exception as e:
+            print(f"[crash_report] Couldn't check the previous session: {e}")
 
     def check_for_updates(self, silent=True):
         """
@@ -538,7 +548,15 @@ class MainWindow(QMainWindow):
             self.showFullScreen()
             QApplication.processEvents()
         if not self.compact:
-            sl, st, sr, sb = docking.window_rect(int(self.slot.winId()))
+            try:
+                sl, st, sr, sb = docking.window_rect(int(self.slot.winId()))
+            except Exception as e:
+                # "Invalid window handle" (1400) - seen 16 times in real logs, mostly right at
+                # launch: the slot's native window isn't there yet / is being re-created. Its
+                # size from Qt (in physical pixels) answers the same question.
+                dpr = self.slot.devicePixelRatioF() or 1.0
+                print(f"[dock] Couldn't measure the game slot from Windows ({e}) - using Qt's size instead.")
+                sl, st, sr, sb = 0, 0, round(self.slot.width() * dpr), round(self.slot.height() * dpr)
             _, fits = docking.fit_game_size(sr - sl, sb - st)
             if not fits:
                 self._enter_compact()
@@ -667,7 +685,15 @@ class MainWindow(QMainWindow):
             self.dock_state.released = False
             return self._dock_now()
 
-        client = self.run_on_ui(dock)
+        client = None
+        for attempt in range(1, 4):
+            client = self.run_on_ui(dock)
+            if client is not None or config.STOP_REQUESTED:
+                break
+            # The panel's window handle can be briefly invalid (seen in real logs), or
+            # Roblox still settling after a resize - a second go usually just works.
+            self.log(f"Couldn't place the Roblox window (attempt {attempt}/3) - trying again...")
+            time.sleep(2.0)
         if client is None:
             self.log("ERROR: Couldn't place the Roblox window. Every position this bot clicks assumes a known "
                      "window size, so it would click the wrong places. The log file has the exact reason.")
@@ -1742,6 +1768,9 @@ class MainWindow(QMainWindow):
         self._save_ui_state()
         if self.engine.bot_thread is not None and self.engine.bot_thread.is_alive():
             self.engine.bot_thread.join(timeout=3.0)
+        # Closing the window mid-run is a normal way to end it, not a crash.
+        from modules import crash_report
+        crash_report.run_ended()
         if self._test_thread is not None and self._test_thread.is_alive():
             self._test_thread.join(timeout=2.0)
         if not self.preview:

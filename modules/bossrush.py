@@ -35,7 +35,7 @@ import pydirectinput
 
 import config
 from vision import capture_screen, find_template, find_all_templates
-from input_controller import click_at, anchor_camera, high_res_timer, mark_input, type_text
+from input_controller import click_at, anchor_camera, high_res_timer, mark_input, type_text, ensure_roblox_focus
 from modules.polling import poll_until as _poll_until, target, settle_match, click_until_gone
 from modules.gamemode_select import click_play, _wait_and_click, _run_steps, _sweep_carousel
 from modules.stage_player import play_preset
@@ -559,6 +559,7 @@ class BossRushRunner:
                 return None          # a second blind E won't do what the first didn't
             if match:
                 self._learn_gate_offset(gate_number, shot)
+            ensure_roblox_focus()
             pydirectinput.press("e")
             if match:
                 print(f"[BossRush] Enter Gate prompt at ({match[0]}, {match[1]}) - pressed E and clicking it.")
@@ -748,6 +749,7 @@ class BossRushRunner:
         Holds W/A/S/D towards a screen-space move (mx, my) - both axes at once, each for
         its own share of the distance - and returns how long each axis was held.
         """
+        ensure_roblox_focus()
         speed = self.walk_speed
         cap = config.BOSSRUSH_SEEK_MAX_PULSE if max_hold is None else max_hold
         tx = min(abs(mx) / speed, cap) if abs(mx) > 6 else 0.0

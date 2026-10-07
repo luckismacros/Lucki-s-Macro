@@ -35,6 +35,28 @@ def roblox_alive():
     return input_controller.roblox_is_running()
 
 
+# The debug folder used to grow forever: every problem saves a ~1.4 MB PNG, so days of
+# unattended runs (Never Stop restarting through the same problem) filled gigabytes. The
+# newest are the ones anyone looks at.
+DEBUG_KEEP_NEWEST = 200
+
+
+def _prune_debug_dir():
+    try:
+        files = [os.path.join(config.DEBUG_DIR, f) for f in os.listdir(config.DEBUG_DIR)
+                 if f.lower().endswith((".png", ".jpg"))]
+        if len(files) <= DEBUG_KEEP_NEWEST:
+            return
+        files.sort(key=os.path.getmtime)
+        for old in files[:len(files) - DEBUG_KEEP_NEWEST]:
+            try:
+                os.remove(old)
+            except OSError:
+                pass
+    except Exception as e:
+        print(f"[health] Couldn't tidy the debug folder: {e}")
+
+
 def save_debug_screenshot(label, screenshot=None):
     """
     Writes the current screen to config.DEBUG_DIR as <timestamp>_<label>.png and
@@ -53,6 +75,7 @@ def save_debug_screenshot(label, screenshot=None):
         filename = f"{time.strftime('%Y%m%d_%H%M%S')}_{safe_label}.png"
         path = os.path.join(config.DEBUG_DIR, filename)
         cv2.imwrite(path, screenshot)
+        _prune_debug_dir()
         return path
     except Exception as e:
         print(f"[health] Could not save a debug screenshot: {e}")

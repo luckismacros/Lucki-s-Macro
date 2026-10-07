@@ -811,6 +811,39 @@ def dock_game_size(monitor_width, monitor_height):
 
     return game_w, game_h
 
+_last_focus_warning = [0.0]
+
+
+def ensure_roblox_focus():
+    """
+    Makes sure Roblox is the foreground window before KEYS are sent. Clicks don't need
+    this (moving onto the game and clicking focuses it), but keys go to whatever window
+    has focus: one click on the macro's own panel, Discord or a browser mid-run, and the
+    walk, the rift's E or the "teleport" typed into Roblox's settings search all went to
+    that window instead. Cheap when Roblox already has focus (one window lookup).
+    Returns True if Roblox is focused afterwards.
+    """
+    try:
+        hwnd = _find_roblox_hwnd()
+        if hwnd is None:
+            return False
+        if win32gui.GetForegroundWindow() == hwnd:
+            return True
+        if time.time() - _last_focus_warning[0] > 30:
+            _last_focus_warning[0] = time.time()
+            print("[input] Roblox isn't the focused window - focusing it before sending keys.")
+        # Windows only lets a process take the foreground if it recently had input; a
+        # tap of Alt (sent to whatever has focus now) is the usual way to be allowed.
+        win32api.keybd_event(win32con.VK_MENU, 0, 0, 0)
+        win32api.keybd_event(win32con.VK_MENU, 0, win32con.KEYEVENTF_KEYUP, 0)
+        win32gui.SetForegroundWindow(hwnd)
+        time.sleep(0.25)
+        return win32gui.GetForegroundWindow() == hwnd
+    except Exception as e:
+        print(f"[input] Couldn't focus Roblox: {e}")
+        return False
+
+
 def focus_roblox_window(pin=True):
     """
     Brings the Roblox window to the OS foreground and (by default) pins it to the
@@ -915,6 +948,7 @@ def type_text(text, interval=0.05):
     A per-character interval rather than one burst: a text box that filters a list on
     every keystroke can drop characters typed faster than it re-renders.
     """
+    ensure_roblox_focus()
     for char in text:
         if char.isupper():
             pydirectinput.keyDown("shift")
