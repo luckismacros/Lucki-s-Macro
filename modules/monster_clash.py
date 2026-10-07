@@ -189,13 +189,53 @@ def click_choose_stage():
                           (config.MONSTER_CLASH_SELECT_STAGE_BTN,))
 
 
+# The party screen's Start comes in two looks: the event's own (start.png) when joining
+# from the lobby, and the ordinary Start Party button (the same one Story/Raids/Portals
+# use) when rejoining from inside a stage after a rift - reported live 2026-10-07.
+_PARTY_STARTS = (config.MONSTER_CLASH_START_BTN, config.START_PARTY_BTN)
+
+
 def click_select_stage():
     return _click_through(config.MONSTER_CLASH_SELECT_STAGE_BTN, "click_monster_clash_select_stage",
-                          (config.MONSTER_CLASH_START_BTN,))
+                          _PARTY_STARTS)
+
+
+def _party_start_on(shot):
+    """Which party-screen Start is up: (template, match) for the better-scoring one, or None."""
+    best = None
+    for template in _PARTY_STARTS:
+        m = _find(template, shot, debug_label="monster_clash_party_start")
+        if m and (best is None or m[2] > best[1][2]):
+            best = (template, m)
+    return best
 
 
 def click_start():
-    """The party screen's Start, before the stage loads."""
+    """
+    The party screen's Start, before the stage loads - whichever of the two looks is up.
+    True / False / "RECONNECTED".
+    """
+    deadline = time.time() + config.TIMEOUT_SECONDS
+    found = None
+    while time.time() < deadline and not config.STOP_REQUESTED:
+        shot = capture_screen()
+        if handle_disconnect_if_present(shot):
+            return "RECONNECTED"
+        found = _party_start_on(shot)
+        if found:
+            break
+        time.sleep(config.POLL_INTERVAL)
+    if config.STOP_REQUESTED:
+        return False
+    if not found:
+        path = health.save_debug_screenshot("monster_clash_party_start_not_found")
+        print(f"[click_monster_clash_start] Neither Start button found (screen saved: {path}).")
+        return False
+    template, match = found
+    if template == config.START_PARTY_BTN:
+        print(f"[MonsterClash] Party screen shows the standard Start button ({match[2]:.2f}) - clicking it.")
+        from modules.match_start import click_start_party
+        return click_start_party()
     return _click_through(config.MONSTER_CLASH_START_BTN, "click_monster_clash_start")
 
 
@@ -273,7 +313,7 @@ class MonsterClashRunner:
             return "RECONNECTED"
         if at_lobby(shot):
             return self._join(from_stage=False)
-        if _find(config.MONSTER_CLASH_START_BTN, shot):
+        if _party_start_on(shot):
             print("[MonsterClash] On the party screen - starting from there.")
             self.position = AT_SPAWN
             self.in_rift = False
