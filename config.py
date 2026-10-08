@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "3.2"
+APP_VERSION = "3.2.1"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -1428,7 +1428,9 @@ TEMPLATE_THRESHOLDS.update({
     MONSTER_CLASH_CHOOSE_STAGE_BTN: 0.80,    # real 0.89-0.90
     MONSTER_CLASH_EVENTS_SMALL_BTN: 0.85,    # real 0.97
     MONSTER_CLASH_CLOSE_GUI_BTN: 0.85,       # real 0.94
-    MONSTER_CLASH_START_RIFT: 0.80,          # real 0.99
+    # Live 0.788-0.798 (2026-10-08 - a rift was lost at 0.80: the prompt sat just under the bar for a
+    # minute); 0.99 was only on the screenshot the crop was cut from. Nothing else tops 0.31.
+    MONSTER_CLASH_START_RIFT: 0.70,
     MONSTER_CLASH_EVENTS_BTN: 0.78,          # real 0.88-0.89
 })
 
@@ -1444,5 +1446,8 @@ MONSTER_CLASH_WALK_VARIANT = "heli_walk"
 
 # Rift hunt, after a match: how long to watch for "Start Rift" before taking Repeat Stage.
 MONSTER_CLASH_RIFT_WAIT = 12.0
+# The rift's arrival cutscene: after a match with no Repeat Stage and no Game Results on
+# screen, how long to wait (hands off) for "Start Rift" to show.
+MONSTER_CLASH_CUTSCENE_WAIT = 180.0
 # A Start Game seen this soon after starting a match is that match's own button fading out.
 MONSTER_CLASH_MIN_MATCH = 20.0

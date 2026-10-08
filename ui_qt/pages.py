@@ -282,8 +282,8 @@ class PresetPicker(StepCard):
         name = self.recording_name()
         a_rename = menu.addAction("Rename…")
         a_copy = menu.addAction("Copy to other acts…") if self.can_copy else None
-        a_export = menu.addAction("Export to a file…")
-        a_import = menu.addAction("Import from a file…")
+        a_export = menu.addAction("Export this recording…")
+        a_import = menu.addAction("Import into this slot…")
         loc_, var_ = self.slot()
         a_restore = (menu.addAction("Restore default version")
                      if name and preset_core.is_default_preset(loc_, var_, name) else None)
@@ -304,21 +304,20 @@ class PresetPicker(StepCard):
                 self.host.log(f"Copied '{pretty(name)}' to {n} act{'s' if n != 1 else ''}.")
         elif chosen is a_export:
             loc, var = self.slot()
-            dest = dialogs.export_stage_preset(self.host, loc, var, name)
+            dest = dialogs.export_recording(self.host, loc, var, name)
             if dest:
                 self.host.log(f"Exported '{pretty(name)}' to {dest}")
+                self.host.toast("Exported", f"'{pretty(name)}' saved to {os.path.basename(dest)}.", "success")
         elif chosen is a_import:
-            result = dialogs.import_stage_preset(self.host)
-            if result:
-                loc, var, new_name = result
+            loc, var = self.slot()
+            new_name = dialogs.import_into_slot(self.host, loc, var)
+            if new_name:
                 self.host.log(f"Imported '{pretty(new_name)}'.")
-                if (loc, var) == self.slot():
-                    if self.source is not None:
-                        self.source.set_value("rec")
-                    self._on_source(emit=False)
-                    self.refresh_list(select=new_name, force=True)
-                else:
-                    self.host.toast("Imported", f"'{pretty(new_name)}' was saved for a different stage than the one selected.", "info")
+                self.host.toast("Imported", f"'{pretty(new_name)}' is ready to use here.", "success")
+                if self.source is not None:
+                    self.source.set_value("rec")
+                self._on_source(emit=False)
+                self.refresh_list(select=new_name, force=True)
         elif a_restore is not None and chosen is a_restore:
             if dialogs.confirm(self.host, "Restore the default?",
                                f"Your changes to '{pretty(name)}' will be replaced by the version that ships with "

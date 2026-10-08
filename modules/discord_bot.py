@@ -14,6 +14,7 @@ Commands (slash commands, registered in every server the bot is in):
   /status      what's running, what it's doing, matches, W/L, rifts, uptime
   /screenshot  the screen right now
   /log         the last log lines
+  /logfile     the full log files + newest debug screenshots as a zip (to read on another PC)
   /stop        stop the run (the same safe stop as the Stop button)
   /start       start the run that was last started (or the page that's open)
   /restart     stop, then start the same run again
@@ -229,6 +230,19 @@ class DiscordBot:
             while len(text) > 1900:
                 text = text.split("\n", 1)[1] if "\n" in text else text[-1900:]
             await interaction.response.send_message(f"```\n{text or '(nothing logged yet)'}\n```")
+
+        @tree.command(name="logfile", description="The full log files + recent debug screenshots, as a zip")
+        async def logfile(interaction: discord.Interaction):
+            if not await allowed(interaction):
+                return
+            await interaction.response.defer()
+            data = await run_blocking(bot.controller.bot_logfile)
+            if not data:
+                await interaction.followup.send("Couldn't put the logs together - see /log.")
+                return
+            name = f"lucki_logs_{time.strftime('%Y-%m-%d_%H-%M')}.zip"
+            await interaction.followup.send(f"Logs from this PC ({len(data) / 1024 / 1024:.1f} MB):",
+                                            file=discord.File(io.BytesIO(data), filename=name))
 
         @tree.command(name="stop", description="Stop the run (finishes the current step safely)")
         async def stop(interaction: discord.Interaction):

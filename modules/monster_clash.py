@@ -359,6 +359,19 @@ class MonsterClashRunner:
             return "IN_MATCH"
         if _find(config.MONSTER_CLASH_EVENTS_SMALL_BTN, shot):
             return self._join(from_stage=True)
+        if self.mode == RIFT:
+            # Possibly the rift's cutscene (nothing on screen the bot knows). Give it time to
+            # show Start Rift before clicking anything.
+            print("[MonsterClash] Nothing recognisable on screen - waiting a little in case it's the rift cutscene...")
+            waited = poll_until([target(config.MONSTER_CLASH_START_RIFT, "RIFT_PROMPT", debug_label="start_rift"),
+                                 target(config.REPEAT_STAGE_BTN, "ENDED", debug_label="monster_clash_repeat"),
+                                 target(config.START_GAME_BTN, True, debug_label="start_game_btn")],
+                                interval=1.0, label="monster_clash_unknown_wait", timeout=90.0,
+                                stuck_timeout=None, game_results=False)
+            if waited in ("RIFT_PROMPT", "ENDED", True, "RECONNECTED", False):
+                if waited in ("ENDED", True):
+                    self.position = UNKNOWN
+                return waited
         path = health.save_debug_screenshot("monster_clash_unknown_screen", shot)
         print(f"[MonsterClash] Don't recognise this screen (saved: {path}) - trying the lobby's Events.")
         return self._join(from_stage=False)
@@ -630,8 +643,20 @@ class MonsterClashRunner:
             presses += 1
             time.sleep(1.5)
         if not presses:
-            print("[MonsterClash] The Start Rift prompt was gone before E could be pressed.")
-            return None
+            # Every caller only gets here because it just SAW the prompt - one frame later a
+            # fresh look can miss it (live 2026-10-08 it hovered at 0.79-0.80 against its bar,
+            # and the rift was walked away from). E is harmless if it's really gone, so press
+            # it anyway - but only call it a rift if the rift's own Start Game then loads.
+            print("[MonsterClash] The Start Rift prompt didn't show on a second look - pressing E anyway.")
+            for _ in range(2):
+                self._press_e()
+                time.sleep(1.5)
+            loaded = poll_until([target(config.START_GAME_BTN, True, debug_label="monster_clash_rift_start_game")],
+                                interval=1.0, label="monster_clash_rift_start_game", timeout=30.0,
+                                stuck_timeout=None, game_results=False)
+            if loaded is not True:
+                print("[MonsterClash] No stage loaded after E - it wasn't the rift after all.")
+                return None if loaded == "TIMEOUT" else loaded
         if _find(config.MONSTER_CLASH_START_RIFT):
             path = health.save_debug_screenshot("monster_clash_rift_wont_start")
             print(f"[MonsterClash] The Start Rift prompt is still up after 5 presses (screen saved: {path}).")
@@ -673,6 +698,74 @@ class MonsterClashRunner:
         if not return_to_lobby(timeout=90.0):
             return False
         return self._join(from_stage=False)
+
+    @staticmethod
+    def _looks_like_cutscene(shot):
+        """
+        The rift's arrival plays a cutscene first (reported 2026-10-08 - a rift was lost to it:
+        the bot gave up on the screen and started clicking menus mid-cutscene). The player's
+        rule: after a match, NO Repeat Stage and NO Game Results means the cutscene is
+        playing. Start Game / the lobby / Start Rift itself rule it out too.
+        """
+        from modules.lobby import at_lobby
+        for template in (config.REPEAT_STAGE_BTN, config.GAME_RESULTS_BTN, config.START_GAME_BTN,
+                         config.MONSTER_CLASH_START_RIFT):
+            if _find(template, shot):
+                return False
+        return not at_lobby(shot)
+
+    def _wait_out_cutscene(self):
+        """
+        Hands off during the rift cutscene: nothing is clicked or pressed until "Start Rift"
+        shows, then E. Up to MONSTER_CLASH_CUTSCENE_WAIT; if Repeat Stage / Game Results /
+        Start Game turn up instead it wasn't a cutscene (None - the normal path carries on).
+        After the wait, E is pressed a few times blind in case the prompt just wasn't
+        recognised. Returns True / False / "RECONNECTED", or None.
+        """
+        self._phase("RIFT CUTSCENE", "#c62828")
+        print("[MonsterClash] No Repeat Stage and no Game Results after the match - the rift's cutscene must be "
+              "playing. Waiting for Start Rift (not touching anything)...")
+        try:
+            from modules import notify
+            notify.send("A rift is coming - its cutscene is playing. Waiting for Start Rift.",
+                        category="lifecycle", title="Monster Clash: rift cutscene", good=None)
+        except Exception:
+            pass
+        deadline = time.time() + config.MONSTER_CLASH_CUTSCENE_WAIT
+        while time.time() < deadline:
+            if config.STOP_REQUESTED:
+                return False
+            shot = capture_screen()
+            if handle_disconnect_if_present(shot):
+                return "RECONNECTED"
+            if _find(config.MONSTER_CLASH_START_RIFT, shot, debug_label="start_rift"):
+                taken = self.take_rift()
+                if taken is not None:
+                    return taken
+                return None
+            if _find(config.REPEAT_STAGE_BTN, shot) or _find(config.GAME_RESULTS_BTN, shot) \
+                    or _find(config.START_GAME_BTN, shot):
+                print("[MonsterClash] The results showed up after all - not a cutscene.")
+                return None
+            time.sleep(1.0)
+
+        path = health.save_debug_screenshot("monster_clash_cutscene_no_prompt")
+        print(f"[MonsterClash] No Start Rift after {config.MONSTER_CLASH_CUTSCENE_WAIT:.0f}s (screen saved: "
+              f"{path}) - pressing E a few times in case the prompt is there but not recognised.")
+        for _ in range(3):
+            self._press_e()
+            time.sleep(2.0)
+        loaded = poll_until([target(config.START_GAME_BTN, True, debug_label="monster_clash_rift_start_game")],
+                            interval=1.0, label="monster_clash_rift_start_game", timeout=25.0,
+                            stuck_timeout=None, game_results=False)
+        if loaded in (False, "RECONNECTED"):
+            return loaded
+        if loaded is True:
+            print("[MonsterClash] A stage loaded after the blind E - treating it as the rift.")
+            SESSION.rift()
+            self.in_rift = True
+            return True
+        return None
 
     def _click_repeat(self):
         """ONE click on Repeat Stage once it's settled (a double click can hit View Party)."""
@@ -717,6 +810,10 @@ class MonsterClashRunner:
             # differently - the match starts without Start Game being pressed (see
             # _wait_for_start_game).
             time.sleep(0.5)
+        if self._looks_like_cutscene(capture_screen()):
+            result = self._wait_out_cutscene()
+            if result is not None:
+                return result
         if _find(config.START_GAME_BTN) and not _find(config.REPEAT_STAGE_BTN):
             print("[MonsterClash] No rift this time - Start Game is already up for the next match.")
             return True

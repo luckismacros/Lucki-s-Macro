@@ -288,3 +288,47 @@ def check_previous_session():
                     category="problems", title="Last run ended unexpectedly", good=False, fields=fields)
     except Exception as e:
         print(f"[notify] Could not send the previous-session message: {e}")
+
+
+# --- sending the evidence to another PC -------------------------------------------------
+
+def bundle_for_sharing(max_bytes=9 * 1024 * 1024, max_shots=6):
+    """
+    One zip (bytes) with what's needed to see what happened on THIS PC from another one:
+    the log (+ the previous log file), the native crash log and the newest debug screenshots
+    (as JPG). Kept under max_bytes - Discord's upload limit for bots is 10 MB - by dropping
+    screenshots first, then the older log. Used by the Discord /logfile command (asked for
+    2026-10-08: the logs that matter are always on the other laptop).
+    """
+    import glob
+    import io
+    import zipfile
+    import cv2
+
+    log_path = logger.get_log_path() or _path("macro_slop.log")
+
+    def build(shots, with_previous_log):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            if os.path.isfile(log_path):
+                z.write(log_path, "logs/macro_slop.log")
+            if with_previous_log and os.path.isfile(log_path + ".1"):
+                z.write(log_path + ".1", "logs/macro_slop.log.1")
+            if os.path.isfile(_path(_NATIVE)):
+                z.write(_path(_NATIVE), "logs/crash_native.log")
+            for shot_path in shots:
+                img = cv2.imread(shot_path)
+                if img is None:
+                    continue
+                ok, jpg = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                if ok:
+                    z.writestr("debug/" + os.path.splitext(os.path.basename(shot_path))[0] + ".jpg", jpg.tobytes())
+        return buf.getvalue()
+
+    shots = sorted(glob.glob(os.path.join("debug", "*.png")), key=os.path.getmtime, reverse=True)[:max_shots]
+    data = b""
+    for n_shots in range(len(shots), -1, -1):
+        data = build(shots[:n_shots], True)
+        if len(data) <= max_bytes:
+            return data
+    return build([], False)
