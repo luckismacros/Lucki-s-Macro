@@ -226,6 +226,12 @@ class MainWindow(QMainWindow):
             atexit.register(self._undock_quietly)
             threading.Thread(target=self._measure_speed, daemon=True).start()
         self.apply_notification_settings(self.user_settings.get("discord_webhook", ""))
+        # Remote control from Discord (modules/discord_bot.py) - off until a token and the
+        # owner's user ID are saved in Settings > Discord.
+        from modules.discord_bot import DiscordBot
+        self.discord_bot = DiscordBot(self)
+        if not self.preview:
+            self.apply_bot_settings()
 
         self._save_timer = QTimer(self, singleShot=True, interval=800)
         self._save_timer.timeout.connect(self._save_ui_state)
@@ -793,6 +799,114 @@ class MainWindow(QMainWindow):
             self.log("WARNING: DPI awareness could not be set. If a screen isn't at 100% scaling, matching "
                      "and clicks will both be wrong.")
 
+    # ------------------------------------------------------------------ Discord bot (remote control)
+    # Called on the bot's worker thread (modules/discord_bot.py runs each command via
+    # asyncio.to_thread), so anything touching widgets goes through run_on_ui().
+
+    def apply_bot_settings(self):
+        s = self.user_settings
+        if s.get("discord_bot_enabled") and s.get("discord_bot_token") and s.get("discord_owner_id"):
+            self.discord_bot.start(s["discord_bot_token"], s["discord_owner_id"])
+            self.log("Discord bot: connecting...")
+        else:
+            self.discord_bot.stop()
+
+    def _wait_until_stopped(self, timeout=120.0):
+        deadline = time.time() + timeout
+        while self.engine.running and time.time() < deadline:
+            time.sleep(0.5)
+        return not self.engine.running
+
+    def bot_status(self):
+        running = bool(self.engine.running)
+        fields = []
+        if running or SESSION.started_at:
+            if self.engine.mode_label:
+                fields.append(("Mode", self.engine.mode_label))
+            if running and self.engine.phase_text:
+                fields.append(("Doing", self.engine.phase_text))
+            if SESSION.started_at:
+                fields.append(("Running for" if running else "Last run", format_duration(SESSION.elapsed)))
+            fields.append(("Matches", SESSION.matches))
+            if SESSION.victories or SESSION.defeats:
+                fields.append(("Won / Lost", f"{SESSION.victories} / {SESSION.defeats}"))
+            if SESSION.rifts:
+                fields.append(("Rifts", SESSION.rifts))
+            if SESSION.disconnects:
+                fields.append(("Reconnects", SESSION.disconnects))
+            if SESSION.restarts:
+                fields.append(("Auto-restarts", SESSION.restarts))
+        if running:
+            summary = "The macro is running."
+        else:
+            summary = "Nothing is running."
+            if config.STUCK_DETECTED:
+                summary += f" Last stop: {config.STUCK_DETECTED}"
+            if getattr(self, "_last_run_page", None) is not None:
+                summary += f"\n/start would run: {self._last_run_page.summary()}"
+        return {"running": running, "summary": summary, "fields": fields}
+
+    def bot_screenshot(self):
+        try:
+            return health.jpg_bytes()
+        except Exception as e:
+            print(f"[DiscordBot] Screenshot failed: {e}")
+            return None
+
+    def bot_log(self, lines=25):
+        return "\n".join(logger.recent_lines(int(lines)))
+
+    def bot_stop(self):
+        if not self.engine.running:
+            return False, "Nothing is running."
+        self.log("Discord: stop requested.")
+        self.run_on_ui(self.stop_bot)
+        if self._wait_until_stopped():
+            return True, "The run has stopped." + (f"\n{SESSION.line()}" if SESSION.started_at else "")
+        return False, "Stop requested - it's still finishing a step (check /status in a moment)."
+
+    def bot_start(self):
+        if self.engine.running:
+            return False, "A run is already going - use /restart to start it over."
+        page = getattr(self, "_last_run_page", None)
+        self.log("Discord: start requested.")
+        result = self.run_on_ui(lambda: self.start_bot(page=page), timeout=15.0)
+        if result is None:
+            return False, "The window didn't respond."
+        return result
+
+    def bot_restart(self):
+        if self.engine.running:
+            self.log("Discord: restart requested - stopping first.")
+            self.run_on_ui(self.stop_bot)
+            if not self._wait_until_stopped():
+                return False, "It's still finishing a step after 2 minutes - try again in a moment."
+            time.sleep(2.0)
+        return self.bot_start()
+
+    def bot_lobby(self):
+        if self.engine.running:
+            self.log("Discord: back to the lobby requested - stopping first.")
+            self.run_on_ui(self.stop_bot)
+            if not self._wait_until_stopped():
+                return False, "It's still finishing a step after 2 minutes - try again in a moment."
+        if getattr(self, "_bot_lobby_busy", False):
+            return False, "Already on the way to the lobby."
+        self._bot_lobby_busy = True
+        try:
+            config.STOP_REQUESTED = False
+            config.STUCK_DETECTED = None
+            if not self.focus_and_pin():
+                return False, "Couldn't find/focus the Roblox window - is Roblox running?"
+            if lobby.at_lobby():
+                return True, "Already at the lobby."
+            ok = lobby.return_to_lobby(timeout=120.0, log=self.log)
+            if ok:
+                return True, "Back at the lobby."
+            return False, "Couldn't get back to the lobby within 2 minutes - see the screenshot."
+        finally:
+            self._bot_lobby_busy = False
+
     # ------------------------------------------------------------------ run control
 
     def current_page(self):
@@ -814,23 +928,26 @@ class MainWindow(QMainWindow):
         else:
             self.start_bot()
 
-    def start_bot(self):
+    def start_bot(self, page=None):
+        """Starts the open page's run (or `page`'s). Returns (started, message) - the
+        Discord bot reports the message back; the Start button ignores it."""
         if self.engine.running:
-            return
+            return False, "A run is already going."
         if self.recorder.is_recording:
             self.toast("Still recording", "Press F8 to finish the recording before starting.", "warning")
-            return
-        page = self.current_page()
+            return False, "A recording is in progress - finish it with F8 first."
+        page = page or self.current_page()
         if page.key == "queue":
+            self._last_run_page = page
             self.start_queue()
-            return
+            return True, "Queue started."
         try:
             method, args, fields = page.run_spec()
         except ValueError as e:
             self.log(f"Can't start yet: {e}")
             self.toast("Not ready yet", str(e), "warning")
             self.refresh_ready(flash=True)
-            return
+            return False, f"Not ready yet: {e}"
         if not notify.is_configured():
             fields = None
         self._time_limit_hit = False
@@ -841,6 +958,8 @@ class MainWindow(QMainWindow):
         self.log(f"Started: {page.summary()} - {page.runs.describe() if page.runs else 'forever'}.")
         self._set_running_ui(True)
         self.refresh_stats()
+        self._last_run_page = page
+        return True, f"{page.summary()} - {page.runs.describe() if page.runs else 'forever'}."
 
     def stop_bot(self):
         if not self.engine.running:
@@ -1768,6 +1887,10 @@ class MainWindow(QMainWindow):
         self._save_ui_state()
         if self.engine.bot_thread is not None and self.engine.bot_thread.is_alive():
             self.engine.bot_thread.join(timeout=3.0)
+        try:
+            self.discord_bot.stop()
+        except Exception:
+            pass
         # Closing the window mid-run is a normal way to end it, not a crash.
         from modules import crash_report
         crash_report.run_ended()

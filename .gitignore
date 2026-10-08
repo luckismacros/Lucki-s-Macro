@@ -12,6 +12,8 @@ dist_nuitka/
 # recorded macros, not shipped app content (assets/default_presets is the shipped
 # copy and stays tracked); logs/debug are runtime output.
 settings.json
+settings.json.bak
+settings.json.tmp
 presets/
 movement_presets/
 challenge_links.json

@@ -62,6 +62,11 @@ DEFAULTS = {
     "notify_problems": True,        # stuck, Roblox closed, disconnected
     "notify_milestones": True,      # soul counts, target reached, type switches
     "notify_every_match": False,    # one message per match - very chatty, off by default
+    # Discord bot (remote control - modules/discord_bot.py). The token is a password for
+    # the bot account; settings.json is git-ignored and never shared.
+    "discord_bot_enabled": False,
+    "discord_bot_token": "",
+    "discord_owner_id": "",
 
     # Expeditions' camera zoom-out, set by the slider in its panel. None = use
     # config.EXPEDITION_CAMERA_ZOOM_OUT_STEPS.
