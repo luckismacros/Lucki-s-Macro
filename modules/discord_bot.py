@@ -18,6 +18,8 @@ Commands (slash commands, registered in every server the bot is in):
   /start       start the run that was last started (or the page that's open)
   /restart     stop, then start the same run again
   /lobby       stop, then go back to the lobby
+  /mode        start any mode (Story, Raids, ..., Monster Clash Farm/Rift hunt) with the
+               settings its page has in the app; stops the current run first
   /reset       stop, leave the game (disconnect popup's Leave, or Esc-L-Enter), rejoin
                through Roblox's home screen, and start the run again
 
@@ -264,6 +266,24 @@ class DiscordBot:
             kwargs = {"file": discord.File(io.BytesIO(data), filename="screen.jpg")} if data else {}
             await interaction.followup.send(embed=embed("Back at the lobby" if ok else "Lobby", msg,
                                                         GOOD if ok else BAD), **kwargs)
+
+        mode_choices = [app_commands.Choice(name=label, value=key)
+                        for key, label in getattr(bot.controller, "BOT_MODES", [])][:25]
+        mc_choices = [app_commands.Choice(name=label, value=key) for key, label in config.MONSTER_CLASH_MODES.items()]
+
+        @tree.command(name="mode", description="Start a mode, with the settings it has in the app")
+        @app_commands.describe(mode="Which mode to start (stops the current run first)",
+                               monster_clash="Monster Clash only: Farm or Rift hunt (default: as set in the app)")
+        @app_commands.choices(mode=mode_choices, monster_clash=mc_choices)
+        async def mode(interaction: discord.Interaction, mode: app_commands.Choice[str],
+                       monster_clash: app_commands.Choice[str] = None):
+            if not await allowed(interaction):
+                return
+            await interaction.response.defer()
+            ok, msg = await run_blocking(bot.controller.bot_mode, mode.value,
+                                         monster_clash.value if monster_clash else None)
+            await interaction.followup.send(embed=embed(f"Started {mode.name}" if ok else f"Couldn't start {mode.name}",
+                                                        msg, GOOD if ok else BAD))
 
         @tree.command(name="reset", description="Leave the game and rejoin through Roblox's home screen")
         @app_commands.describe(restart_run="Start the run again afterwards if one was going (default: yes)")

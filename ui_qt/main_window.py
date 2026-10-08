@@ -910,10 +910,10 @@ class MainWindow(QMainWindow):
     def bot_start(self):
         return self._bot_action("start", self._bot_start)
 
-    def _bot_start(self):
+    def _bot_start(self, page=None):
         if self.engine.running:
             return False, "A run is already going - use /restart to start it over."
-        page = getattr(self, "_last_run_page", None)
+        page = page or getattr(self, "_last_run_page", None)
         self.log("Discord: start requested.")
         def start_it():
             self._bot_starting = True
@@ -969,6 +969,37 @@ class MainWindow(QMainWindow):
         if config.STOP_REQUESTED:
             return False, "Stopped."
         return False, "Couldn't get back to the lobby within 2 minutes - see the screenshot."
+
+    # Modes /mode can start: every page with a run of its own (not "Others").
+    BOT_MODES = [(key, label) for key, label, _ in NAV if key != "others"]
+
+    def bot_mode(self, key, monster_clash_mode=None):
+        return self._bot_action("mode", lambda: self._bot_mode(key, monster_clash_mode))
+
+    def _bot_mode(self, key, monster_clash_mode):
+        """
+        Discord /mode: start a specific mode with whatever that page is set to in the app
+        (map, act, recordings...). Stops the current run first. Monster Clash can also be
+        switched between Farm and Rift hunt here.
+        """
+        page = self.pages.get(key)
+        if page is None:
+            return False, f"Unknown mode '{key}'."
+        if self.engine.running:
+            self.log(f"Discord: switching to {key} - stopping the current run first.")
+            self.run_on_ui(self.stop_bot)
+            if not self._wait_until_stopped():
+                return False, "The current run is still finishing a step after 2 minutes - try again in a moment."
+            time.sleep(2.0)
+
+        def show():
+            self.nav.select(key, emit=True)
+            if key == "monsterclash" and monster_clash_mode in config.MONSTER_CLASH_MODES:
+                page.mode.set_value(monster_clash_mode, emit=True, animate=False)
+            return True
+        self.run_on_ui(show)
+        self.log(f"Discord: starting {key}.")
+        return self._bot_start(page=page)
 
     def bot_reset(self, start_after=True):
         return self._bot_action("reset", lambda: self._bot_reset(start_after))
