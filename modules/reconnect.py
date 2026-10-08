@@ -42,14 +42,14 @@ def _wait_click(template, label, timeout):
     return False
 
 
-def rejoin_via_home():
+def rejoin_via_home(why="Reconnect isn't working"):
     """
     The way out when Reconnect doesn't work (the player's own recipe, 2026-10-08): Leave
     on the disconnect popup -> Roblox's Home -> Search -> type the game's name -> the first
     result -> Play -> wait for the lobby. True once the lobby is up, False if a step failed
     (the caller goes back to clicking Reconnect and tries this again later).
     """
-    print("[Reconnect] Reconnect isn't working - leaving and rejoining through Roblox's home screen.")
+    print(f"[Reconnect] {why} - leaving and rejoining through Roblox's home screen.")
     shot = capture_screen()
     if _find(shot, config.ROBLOX_LEAVE_BTN):
         if not _wait_click(config.ROBLOX_LEAVE_BTN, "roblox_leave", 5.0):
@@ -87,6 +87,90 @@ def rejoin_via_home():
         time.sleep(3.0)
     print(f"[Reconnect] The lobby didn't load within {config.ROBLOX_REJOIN_LOAD_TIMEOUT:.0f}s of pressing Play.")
     return False
+
+
+def _press(key):
+    import pydirectinput
+    input_controller.ensure_roblox_focus()
+    pydirectinput.press(key)
+    input_controller.mark_input()
+
+
+def _at_roblox_home(shot):
+    return bool(_find(shot, config.ROBLOX_HOME_BTN) or _find(shot, config.ROBLOX_SEARCH_BAR))
+
+
+def leave_and_rejoin():
+    """
+    A full reset (the Discord /reset command, and Never Stop's last resort): get out of the
+    game server, then back in through Roblox's home screen.
+
+      - Disconnect popup up: Leave.
+      - In the game: Esc, L, Enter (Roblox's own "leave game" keys) - tried twice.
+      - Already on Roblox's home screen: nothing to leave.
+
+    Then rejoin_via_home(). Returns (ok, message).
+    """
+    if not input_controller.roblox_is_running():
+        return False, "Roblox isn't running."
+    shot = capture_screen()
+    popup = bool(_find(shot, config.ROBLOX_LEAVE_BTN) or _find(shot, config.RECONNECT_BTN))
+    if popup:
+        print("[Reset] The disconnect popup is up - leaving through it.")
+        # rejoin_via_home() clicks Leave itself - but only if it's recognised. The popup can
+        # be up with just Reconnect matching; give Leave a few seconds, then fall back to the
+        # in-game keys (Esc closes the popup, then Esc-L-Enter leaves).
+        deadline = time.time() + 8.0
+        while time.time() < deadline and not _find(capture_screen(), config.ROBLOX_LEAVE_BTN):
+            time.sleep(1.0)
+        if not _find(capture_screen(), config.ROBLOX_LEAVE_BTN):
+            print("[Reset] The popup's Leave button isn't recognised - using the leave keys instead.")
+            _press("esc")
+            time.sleep(1.0)
+            popup = False
+    if not popup and not _at_roblox_home(capture_screen()):
+        for attempt in (1, 2):
+            if config.STOP_REQUESTED:
+                return False, "Stopped."
+            print(f"[Reset] Leaving the game: Esc, L, Enter (attempt {attempt}/2).")
+            _press("esc")
+            time.sleep(1.2)
+            _press("l")
+            time.sleep(1.2)
+            _press("enter")
+            deadline = time.time() + 25.0
+            while time.time() < deadline and not config.STOP_REQUESTED:
+                time.sleep(2.0)
+                if _at_roblox_home(capture_screen()):
+                    break
+            if _at_roblox_home(capture_screen()):
+                break
+        else:
+            if config.STOP_REQUESTED:
+                return False, "Stopped."
+            path = health.save_debug_screenshot("reset_could_not_leave")
+            return False, f"Couldn't leave the game with Esc, L, Enter (screen saved: {path})."
+    if config.STOP_REQUESTED:
+        return False, "Stopped."
+    if rejoin_via_home(why="Reset"):
+        return True, "Left and rejoined - back at the lobby."
+    path = health.save_debug_screenshot("reset_rejoin_failed")
+    return False, f"Left the game, but rejoining didn't finish (screen saved: {path})."
+
+
+def full_reset(focus_and_pin):
+    """
+    The whole reset as one sequence, shared by Discord's /reset and Never Stop's last
+    resort: focus/place Roblox, leave and rejoin, place it again (Roblox can come back at
+    another size after its home screen). focus_and_pin is the window's own (it docks
+    Roblox). Returns (ok, message).
+    """
+    if not focus_and_pin():
+        return False, "Couldn't find/focus the Roblox window - is Roblox running?"
+    ok, msg = leave_and_rejoin()
+    if ok:
+        focus_and_pin()
+    return ok, msg
 
 
 def handle_disconnect_if_present(screenshot):
