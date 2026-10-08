@@ -1152,6 +1152,23 @@ class SettingsSheet(FloatingDialog):
         b_row.addWidget(restore_btn)
         b_row.addStretch(1)
         sec_b.col.addLayout(b_row)
+        sec_b.col.addWidget(label("New version? Extract it to a new folder and open it - it finds your old one and "
+                                  "offers to bring everything over. Or pick the old folder yourself:",
+                                  "hint", wrap=True))
+        bring_btn = Button("Bring over data from another folder…", "subtle", icon="download", height=34, font_px=12)
+        bring_btn.setFocusPolicy(Qt.NoFocus)
+        bring_btn.setToolTip("Copies recordings, walks, challenge links and settings (webhook and bot included) "
+                             "from an older Lucki's Macro folder into this one. The old folder isn't changed.")
+
+        def bring_over():
+            if self.host.bring_over_data():
+                # Settings were just replaced underneath this sheet - close it without writing
+                # its (now stale) fields back over them.
+                self._skip_apply = True
+                self.accept()
+
+        bring_btn.clicked.connect(bring_over)
+        sec_b.col.addWidget(bring_btn, 0, Qt.AlignLeft)
         col.addWidget(sec_b)
 
         sec = _Section("FILES")
@@ -1241,6 +1258,9 @@ class SettingsSheet(FloatingDialog):
             self.host.toast("Up to date", f"You're on v{config.APP_VERSION}, the latest.", "success")
 
     def done(self, result):
+        if getattr(self, "_skip_apply", False):
+            super().done(result)
+            return
         if hasattr(self, "_apply_discord"):
             self._apply_discord()
         if hasattr(self, "_apply_bot"):
