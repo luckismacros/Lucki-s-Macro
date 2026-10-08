@@ -80,6 +80,17 @@ RESTART_RESET_AFTER = 600
 # a choice made in Settings, not a problem to recover from.
 NEVER_STOP_EXEMPT_PREFIXES = ("TOO MANY DEFEATS",)
 
+# Never Stop's last resort: after this many restarts in a row without a healthy stretch in
+# between (RESTART_RESET_AFTER), the game itself is probably wedged in a way no restart from
+# inside it fixes - leave the server and rejoin through Roblox's home screen first
+# (modules.reconnect.leave_and_rejoin, the same as Discord's /reset).
+FULL_RESET_AFTER_RESTARTS = 3
+# Only stops a rejoin can plausibly cure - the game showing something the bot can't get
+# past. Not a crash in the bot's own code, a missing recording or the window failing to
+# place: leaving the server fixes none of those, it only adds minutes of disruption.
+FULL_RESET_CURES = ("STUCK", "NAVIGATION FAILED", "NEVER APPEARED", "START FAILED", "MATCH FAILED",
+                    "NEXT STAGE FAILED", "RUN FAILED", "COULD NOT", "NO REWARD", "NO REPEAT")
+
 
 def _autoplay_walk_preset_name(category_key):
     """
@@ -1751,6 +1762,33 @@ class BotEngine:
         except Exception as notify_e:
             print(f"[notify] Could not send the crash message: {notify_e}")
 
+    def _full_reset(self, restarts_in_a_row, reason):
+        """Leave the game and rejoin before the next Never Stop restart. Never raises."""
+        from modules import reconnect
+        self.log(f"NEVER STOP: {restarts_in_a_row} restarts in a row haven't fixed it ({reason}) - "
+                 f"leaving the game and rejoining before the next try.")
+        self.set_phase("FULL RESET - REJOINING", "#ffb300")
+        try:
+            notify.send(f"{restarts_in_a_row} restarts in a row haven't fixed **{reason}** - leaving the game "
+                        f"and rejoining through Roblox's home screen before trying again.",
+                        category="problems", title="Full reset", good=None, image_bytes=health.jpg_bytes())
+        except Exception:
+            pass
+        try:
+            ok, msg = reconnect.full_reset(self.ui.focus_and_pin)
+            self.log(f"Full reset: {msg}")
+            try:
+                notify.send(msg, category="problems", title="Full reset done" if ok else "Full reset failed",
+                            good=ok, image_bytes=health.jpg_bytes())
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[engine] The full reset hit an error: {type(e).__name__}: {e}")
+        # Whatever the reset did, the restart that follows starts clean.
+        if not self.user_stop_requested:
+            config.STOP_REQUESTED = False
+            config.STUCK_DETECTED = None
+
     def _supervised_run(self, target, args):
         """
         Runs a gamemode loop, and - with Never Stop on - starts it again whenever it
@@ -1814,6 +1852,13 @@ class BotEngine:
                 config.STOP_REQUESTED = True
                 self._cleanup()
                 return
+            if restarts_in_a_row % FULL_RESET_AFTER_RESTARTS == 0 and \
+                    any(key in (reason or "").upper() for key in FULL_RESET_CURES):
+                self._full_reset(restarts_in_a_row, reason)
+                if self.user_stop_requested:
+                    config.STOP_REQUESTED = True
+                    self._cleanup()
+                    return
             self.log(f"NEVER STOP: restarting now (restart #{SESSION.restarts}).")
 
     def _cleanup(self):

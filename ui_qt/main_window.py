@@ -229,6 +229,8 @@ class MainWindow(QMainWindow):
         # Remote control from Discord (modules/discord_bot.py) - off until a token and the
         # owner's user ID are saved in Settings > Discord.
         from modules.discord_bot import DiscordBot
+        self._bot_lock = threading.Lock()      # one state-changing Discord command at a time
+        self._bot_busy_with = None
         self.discord_bot = DiscordBot(self)
         if not self.preview:
             self.apply_bot_settings()
@@ -811,6 +813,33 @@ class MainWindow(QMainWindow):
         else:
             self.discord_bot.stop()
 
+    def _bot_action(self, name, fn):
+        """
+        Runs a state-changing command (start/stop/restart/lobby/reset) - one at a time. Two
+        overlapping (a /start while /lobby is still clicking its way out) would fight over
+        the mouse and the game.
+        """
+        lock = self._bot_lock
+        if not lock.acquire(blocking=False):
+            return False, f"Busy with /{self._bot_busy_with or '?'} - try again when it's done (or /stop it)."
+        self._bot_busy_with = name
+        outside_engine = name in ("lobby", "reset")
+        if outside_engine:
+            # These click and press keys with no run going, so the window would look idle:
+            # show it as busy, and make its Stop button (and /stop) abort them.
+            self.run_on_ui(lambda: self._set_running_ui(True))
+        try:
+            return fn()
+        except Exception as e:
+            print(f"[DiscordBot] /{name} failed: {type(e).__name__}: {e}")
+            return False, f"/{name} hit an error: {type(e).__name__}: {e}"
+        finally:
+            self._bot_busy_with = None
+            lock.release()
+            if outside_engine and not self.engine.running:
+                config.STOP_REQUESTED = False
+                self.run_on_ui(lambda: self._set_running_ui(False))
+
     def _wait_until_stopped(self, timeout=120.0):
         deadline = time.time() + timeout
         while self.engine.running and time.time() < deadline:
@@ -857,6 +886,19 @@ class MainWindow(QMainWindow):
         return "\n".join(logger.recent_lines(int(lines)))
 
     def bot_stop(self):
+        # Never behind the lock: /stop must be able to interrupt a long /reset or /lobby.
+        busy = self._bot_busy_with
+        if busy in ("lobby", "reset"):
+            self.log(f"Discord: stopping /{busy}.")
+            config.STOP_REQUESTED = True
+            deadline = time.time() + 60.0
+            while self._bot_busy_with == busy and time.time() < deadline:
+                time.sleep(0.5)
+            return (True, f"/{busy} stopped.") if self._bot_busy_with != busy else \
+                (False, f"Asked /{busy} to stop - it's finishing its current step.")
+        return self._bot_stop()
+
+    def _bot_stop(self):
         if not self.engine.running:
             return False, "Nothing is running."
         self.log("Discord: stop requested.")
@@ -866,46 +908,95 @@ class MainWindow(QMainWindow):
         return False, "Stop requested - it's still finishing a step (check /status in a moment)."
 
     def bot_start(self):
+        return self._bot_action("start", self._bot_start)
+
+    def _bot_start(self):
         if self.engine.running:
             return False, "A run is already going - use /restart to start it over."
         page = getattr(self, "_last_run_page", None)
         self.log("Discord: start requested.")
-        result = self.run_on_ui(lambda: self.start_bot(page=page), timeout=15.0)
+        def start_it():
+            self._bot_starting = True
+            try:
+                return self.start_bot(page=page)
+            finally:
+                self._bot_starting = False
+        result = self.run_on_ui(start_it, timeout=15.0)
         if result is None:
             return False, "The window didn't respond."
-        return result
+        ok, msg = result
+        if not ok:
+            return result
+        # A run that dies in its first seconds (no Roblox window, window couldn't be placed)
+        # must not be reported as started.
+        for _ in range(10):
+            time.sleep(0.5)
+            if not self.engine.running:
+                reason = config.STUCK_DETECTED or "it stopped right away - see /log"
+                return False, f"Started, but it stopped again: {reason}"
+        return True, msg
 
     def bot_restart(self):
+        return self._bot_action("restart", self._bot_restart)
+
+    def _bot_restart(self):
         if self.engine.running:
             self.log("Discord: restart requested - stopping first.")
             self.run_on_ui(self.stop_bot)
             if not self._wait_until_stopped():
                 return False, "It's still finishing a step after 2 minutes - try again in a moment."
             time.sleep(2.0)
-        return self.bot_start()
+        return self._bot_start()
 
     def bot_lobby(self):
+        return self._bot_action("lobby", self._bot_lobby)
+
+    def _bot_lobby(self):
         if self.engine.running:
             self.log("Discord: back to the lobby requested - stopping first.")
             self.run_on_ui(self.stop_bot)
             if not self._wait_until_stopped():
                 return False, "It's still finishing a step after 2 minutes - try again in a moment."
-        if getattr(self, "_bot_lobby_busy", False):
-            return False, "Already on the way to the lobby."
-        self._bot_lobby_busy = True
-        try:
-            config.STOP_REQUESTED = False
-            config.STUCK_DETECTED = None
-            if not self.focus_and_pin():
-                return False, "Couldn't find/focus the Roblox window - is Roblox running?"
-            if lobby.at_lobby():
-                return True, "Already at the lobby."
-            ok = lobby.return_to_lobby(timeout=120.0, log=self.log)
-            if ok:
-                return True, "Back at the lobby."
-            return False, "Couldn't get back to the lobby within 2 minutes - see the screenshot."
-        finally:
-            self._bot_lobby_busy = False
+        config.STOP_REQUESTED = False
+        config.STUCK_DETECTED = None
+        if not self.focus_and_pin():
+            return False, "Couldn't find/focus the Roblox window - is Roblox running?"
+        if lobby.at_lobby():
+            return True, "Already at the lobby."
+        ok = lobby.return_to_lobby(timeout=120.0, log=self.log)
+        if ok:
+            return True, "Back at the lobby."
+        if config.STOP_REQUESTED:
+            return False, "Stopped."
+        return False, "Couldn't get back to the lobby within 2 minutes - see the screenshot."
+
+    def bot_reset(self, start_after=True):
+        return self._bot_action("reset", lambda: self._bot_reset(start_after))
+
+    def _bot_reset(self, start_after):
+        """
+        Leave the game server and come back in through Roblox's home screen (Discord /reset):
+        the cure for a game that's stuck in a way nothing inside it can fix. Restarts the run
+        afterwards if one was going (and start_after).
+        """
+        from modules import reconnect
+        was_running = bool(self.engine.running)
+        if was_running:
+            self.log("Discord: reset requested - stopping the run first.")
+            self.run_on_ui(self.stop_bot)
+            if not self._wait_until_stopped():
+                return False, "It's still finishing a step after 2 minutes - try again in a moment."
+        config.STOP_REQUESTED = False
+        config.STUCK_DETECTED = None
+        self.log("Discord: resetting - leaving the game and rejoining.")
+        ok, msg = reconnect.full_reset(self.focus_and_pin)
+        self.log(f"Reset: {msg}")
+        if not ok:
+            return False, msg
+        if was_running and start_after:
+            started, start_msg = self._bot_start()
+            return started, f"{msg}\nRun restarted: {start_msg}" if started else f"{msg}\nBut the run didn't restart: {start_msg}"
+        return True, msg
 
     # ------------------------------------------------------------------ run control
 
@@ -913,6 +1004,12 @@ class MainWindow(QMainWindow):
         return self.page_stack.currentWidget()
 
     def toggle_run(self):
+        busy = getattr(self, "_bot_busy_with", None)
+        if busy in ("lobby", "reset"):
+            # A Discord /reset or /lobby is driving the game - the Stop button stops it.
+            self.log(f"Stopping the Discord /{busy}...")
+            config.STOP_REQUESTED = True
+            return
         queue = getattr(self, "_queue", None)
         if queue and queue.get("active") and not self.engine.running:
             queue["active"] = False
@@ -933,6 +1030,9 @@ class MainWindow(QMainWindow):
         Discord bot reports the message back; the Start button ignores it."""
         if self.engine.running:
             return False, "A run is already going."
+        if getattr(self, "_bot_busy_with", None) in ("lobby", "reset") and \
+                threading.current_thread() is threading.main_thread() and not getattr(self, "_bot_starting", False):
+            return False, f"A Discord /{self._bot_busy_with} is still running."
         if self.recorder.is_recording:
             self.toast("Still recording", "Press F8 to finish the recording before starting.", "warning")
             return False, "A recording is in progress - finish it with F8 first."

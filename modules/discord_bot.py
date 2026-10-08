@@ -18,6 +18,8 @@ Commands (slash commands, registered in every server the bot is in):
   /start       start the run that was last started (or the page that's open)
   /restart     stop, then start the same run again
   /lobby       stop, then go back to the lobby
+  /reset       stop, leave the game (disconnect popup's Leave, or Esc-L-Enter), rejoin
+               through Roblox's home screen, and start the run again
 
 Only the Discord account whose user ID is in Settings can use them - everyone else gets
 a refusal. There is deliberately no command that runs arbitrary code or changes files.
@@ -55,6 +57,10 @@ class DiscordBot:
         self._loop = None
         self._client = None
         self._stop = threading.Event()
+        # Servers whose commands are already registered this session. on_ready fires again
+        # after every reconnect; re-syncing each time (bad WiFi = many reconnects) runs into
+        # Discord's rate limits for nothing.
+        self._synced = set()
 
     # --- lifecycle (called from the window) --------------------------------------------
     def start(self, token, owner_id):
@@ -71,6 +77,8 @@ class DiscordBot:
         if not token or not owner_id:
             self.state = "off"
             return
+        if token != self.token:
+            self._synced.clear()           # another bot application - its commands aren't registered
         self.token, self.owner_id = token, owner_id
         self._stop.clear()
         self.state = "connecting"
@@ -136,26 +144,41 @@ class DiscordBot:
         tree = app_commands.CommandTree(client)
         bot = self
 
+        async def sync_guild(guild):
+            if guild.id in bot._synced:
+                return
+            try:
+                # Per-server sync shows the commands immediately (a global sync can take up
+                # to an hour to appear).
+                tree.copy_global_to(guild=guild)
+                await tree.sync(guild=guild)
+                bot._synced.add(guild.id)
+            except Exception as e:
+                print(f"[DiscordBot] Couldn't register the commands in '{guild.name}': {e}")
+
         @client.event
         async def on_ready():
             bot.state = "online"
             print(f"[DiscordBot] Online as {client.user} in {len(client.guilds)} server(s).")
+            if not client.guilds:
+                print("[DiscordBot] The bot isn't in any server yet - invite it with the OAuth2 URL "
+                      "(scopes: bot + applications.commands).")
             for guild in client.guilds:
-                try:
-                    # Per-server sync shows the commands immediately (a global sync can take
-                    # up to an hour to appear).
-                    tree.copy_global_to(guild=guild)
-                    await tree.sync(guild=guild)
-                except Exception as e:
-                    print(f"[DiscordBot] Couldn't register the commands in '{guild.name}': {e}")
+                await sync_guild(guild)
 
         @client.event
         async def on_guild_join(guild):
-            try:
-                tree.copy_global_to(guild=guild)
-                await tree.sync(guild=guild)
-            except Exception as e:
-                print(f"[DiscordBot] Couldn't register the commands in '{guild.name}': {e}")
+            await sync_guild(guild)
+
+        @client.event
+        async def on_disconnect():
+            if bot.state == "online":
+                bot.state = "connecting"
+
+        @client.event
+        async def on_resumed():
+            # A short drop is RESUMEd, which fires this - not on_ready.
+            bot.state = "online"
 
         async def allowed(interaction):
             if interaction.user.id == bot.owner_id:
@@ -240,6 +263,20 @@ class DiscordBot:
             data = await run_blocking(bot.controller.bot_screenshot)
             kwargs = {"file": discord.File(io.BytesIO(data), filename="screen.jpg")} if data else {}
             await interaction.followup.send(embed=embed("Back at the lobby" if ok else "Lobby", msg,
+                                                        GOOD if ok else BAD), **kwargs)
+
+        @tree.command(name="reset", description="Leave the game and rejoin through Roblox's home screen")
+        @app_commands.describe(restart_run="Start the run again afterwards if one was going (default: yes)")
+        async def reset(interaction: discord.Interaction, restart_run: bool = True):
+            if not await allowed(interaction):
+                return
+            await interaction.response.defer()
+            await interaction.followup.send("Resetting: stopping the run, leaving the game and rejoining - "
+                                            "this takes a minute or two.")
+            ok, msg = await run_blocking(bot.controller.bot_reset, restart_run)
+            data = await run_blocking(bot.controller.bot_screenshot)
+            kwargs = {"file": discord.File(io.BytesIO(data), filename="screen.jpg")} if data else {}
+            await interaction.followup.send(embed=embed("Reset done" if ok else "Reset failed", msg,
                                                         GOOD if ok else BAD), **kwargs)
 
         @tree.error
