@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "2.9.2"
+APP_VERSION = "2.9.3"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -77,6 +77,12 @@ TEMPLATE_THRESHOLDS = {
     # 1600/1919 rescale of a UI icon is the wrong size). All score >= 0.99 on their own
     # screen; nothing else in the repo's ~70 screenshots reaches these bars.
     "assets/templates/settings.png": 0.85,
+    # Roblox's own menus (disconnect popup's Leave, the app's Home / Search / Play) - plain
+    # flat buttons, measured only on the user's own crops; the log prints what they reach.
+    "assets/templates/Roblox/leave.png": 0.75,
+    "assets/templates/Roblox/home.png": 0.75,
+    "assets/templates/Roblox/search.png": 0.75,
+    "assets/templates/Roblox/play.png": 0.75,
     "assets/templates/teleport_spawn.png": 0.85,
     "assets/templates/close_x.png": 0.85,
     "assets/templates/close_settings.png": 0.55,
@@ -697,6 +703,21 @@ NEXT_STAGE_BTN = "assets/templates/next_stage.png"
 AUTOPLAY_ON_BTN = "assets/templates/autoplay_on.png"
 AUTOPLAY_OFF_BTN = "assets/templates/autoplay_off.png"
 RECONNECT_BTN = "assets/templates/reconnect_btn.png"
+
+# --- Rejoining through Roblox's home screen -------------------------------------------
+# Reconnect doesn't always work (live 2026-10-08: clicked every ~11s for over 2 hours).
+# After RECONNECT_TRIES_BEFORE_REJOIN clicks the bot leaves instead: Leave (on the same
+# popup) -> Roblox's Home -> Search -> "Anime Expeditions" -> the first result (a fixed
+# spot, ROBLOX_SEARCH_RESULT_POS) -> Play -> the lobby. Crops taken at 1600x900.
+ROBLOX_LEAVE_BTN = "assets/templates/Roblox/leave.png"
+ROBLOX_HOME_BTN = "assets/templates/Roblox/home.png"
+ROBLOX_SEARCH_BAR = "assets/templates/Roblox/search.png"
+ROBLOX_PLAY_BTN = "assets/templates/Roblox/play.png"
+ROBLOX_GAME_SEARCH = "Anime Expeditions"
+ROBLOX_SEARCH_RESULT_POS = (168, 203)
+RECONNECT_TRIES_BEFORE_REJOIN = 3
+# How long the game may take to load from Play to the lobby before the rejoin is retried.
+ROBLOX_REJOIN_LOAD_TIMEOUT = 240.0
 CLICK_ANYWHERE_TEXT = "assets/templates/click_anywhere_to_continue.png"
 
 # Recovery-only button: shows up when the Victory/Defeat/reward popup gets closed
@@ -1396,6 +1417,20 @@ for _path in (MONSTER_CLASH_EVENTS_BTN, MONSTER_CLASH_EVENTS_SMALL_BTN, MONSTER_
     # Rescaled crops: real sightings 0.79-0.99, nothing else checked reached 0.50 (the
     # green menu buttons look alike crop-to-crop, up to 0.76 - see _next_is_up).
     TEMPLATE_THRESHOLDS.setdefault(_path, 0.70)
+
+# Per-button bars from the real scores of a 16-hour run (2026-10-08), each well above
+# what look-alikes reach and below what the real button scored. Start's old 0.70 let a
+# different green button on the stage-select screen through at 0.71: Select Stage was
+# skipped and every rejoin after a rift stalled on the party screen.
+TEMPLATE_THRESHOLDS.update({
+    MONSTER_CLASH_START_BTN: 0.85,           # real 0.97, wrong button 0.71
+    MONSTER_CLASH_SELECT_STAGE_BTN: 0.78,    # real 0.87
+    MONSTER_CLASH_CHOOSE_STAGE_BTN: 0.80,    # real 0.89-0.90
+    MONSTER_CLASH_EVENTS_SMALL_BTN: 0.85,    # real 0.97
+    MONSTER_CLASH_CLOSE_GUI_BTN: 0.85,       # real 0.94
+    MONSTER_CLASH_START_RIFT: 0.80,          # real 0.99
+    MONSTER_CLASH_EVENTS_BTN: 0.78,          # real 0.88-0.89
+})
 
 MONSTER_CLASH_MODES = {
     "farm": "Farm (Auto Retry on)",

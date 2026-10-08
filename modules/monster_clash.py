@@ -405,9 +405,30 @@ class MonsterClashRunner:
         """
         if self.mode == FARM:
             return wait_for_start_game()
+        last_nudge = [0.0]
+
+        def _still_in_menus(shot):
+            # Still on the party screen (Start / Change Gamemode) or the stage select - a
+            # click that didn't land, or a step that was skipped (live 2026-10-08: every
+            # rejoin after a rift stalled here until Never Stop restarted the run). Push
+            # forward from wherever it is, at most every 8s.
+            if time.time() - last_nudge[0] < 8.0:
+                return None
+            if _party_start_on(shot):
+                last_nudge[0] = time.time()
+                print("[MonsterClash] Still on the party screen - pressing Start.")
+                click_start()
+            elif _find(config.MONSTER_CLASH_SELECT_STAGE_BTN, shot):
+                last_nudge[0] = time.time()
+                print("[MonsterClash] Still on the stage select - pressing Select Stage, then Start.")
+                if click_select_stage() is True:
+                    click_start()
+            return None
+
         result = poll_until([target(config.START_GAME_BTN, True, debug_label="start_game_btn")],
                             interval=1.0, label="monster_clash_start_game", timeout=90.0,
-                            stuck_timeout=None, lobby_grace=25.0, game_results=False)
+                            stuck_timeout=None, lobby_grace=25.0, game_results=False,
+                            custom_check=_still_in_menus)
         if result == "TIMEOUT":
             if _find(config.AUTOPLAY_ON_BTN) or _find(config.AUTOPLAY_OFF_BTN):
                 print("[MonsterClash] No Start Game but the stage is up - the game's Auto Start looks ON. "

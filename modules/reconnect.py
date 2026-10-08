@@ -19,6 +19,76 @@ import config
 _STILL_TRYING_AFTER = 5 * 60.0
 
 
+def _find(shot, template, label=None):
+    return find_template(shot, template, config.MATCH_THRESHOLD, debug_label=label)
+
+
+def _at_lobby(shot):
+    return bool(_find(shot, config.PLAY_BTN) or _find(shot, config.ITEMS_BTN))
+
+
+def _wait_click(template, label, timeout):
+    """Waits for a button and clicks it. True if clicked, False if it never showed / stop."""
+    deadline = time.time() + timeout
+    while time.time() < deadline and not config.STOP_REQUESTED:
+        match = _find(capture_screen(), template, label)
+        if match:
+            x, y, conf = match
+            print(f"[Reconnect] {label}: clicking at ({x}, {y}), confidence={conf:.2f}.")
+            click_at(x, y)
+            return True
+        time.sleep(1.0)
+    print(f"[Reconnect] {label}: not found within {timeout:.0f}s.")
+    return False
+
+
+def rejoin_via_home():
+    """
+    The way out when Reconnect doesn't work (the player's own recipe, 2026-10-08): Leave
+    on the disconnect popup -> Roblox's Home -> Search -> type the game's name -> the first
+    result -> Play -> wait for the lobby. True once the lobby is up, False if a step failed
+    (the caller goes back to clicking Reconnect and tries this again later).
+    """
+    print("[Reconnect] Reconnect isn't working - leaving and rejoining through Roblox's home screen.")
+    shot = capture_screen()
+    if _find(shot, config.ROBLOX_LEAVE_BTN):
+        if not _wait_click(config.ROBLOX_LEAVE_BTN, "roblox_leave", 5.0):
+            return False
+        time.sleep(5.0)
+    if not _wait_click(config.ROBLOX_HOME_BTN, "roblox_home", 45.0):
+        return False
+    time.sleep(3.0)
+    if not _wait_click(config.ROBLOX_SEARCH_BAR, "roblox_search", 30.0):
+        return False
+    time.sleep(1.0)
+    input_controller.type_text(config.ROBLOX_GAME_SEARCH)
+    time.sleep(0.5)
+    input_controller.ensure_roblox_focus()
+    import pydirectinput
+    pydirectinput.press("enter")
+    input_controller.mark_input()
+    time.sleep(4.0)
+    x, y = config.ROBLOX_SEARCH_RESULT_POS
+    print(f"[Reconnect] Opening the first search result at ({x}, {y}).")
+    click_at(x, y)
+    time.sleep(3.0)
+    if not _wait_click(config.ROBLOX_PLAY_BTN, "roblox_play", 30.0):
+        return False
+
+    print("[Reconnect] Joining the game - waiting for the lobby...")
+    deadline = time.time() + config.ROBLOX_REJOIN_LOAD_TIMEOUT
+    while time.time() < deadline and not config.STOP_REQUESTED:
+        shot = capture_screen()
+        if _at_lobby(shot):
+            return True
+        if _find(shot, config.RECONNECT_BTN):
+            print("[Reconnect] Disconnected again while joining.")
+            return False
+        time.sleep(3.0)
+    print(f"[Reconnect] The lobby didn't load within {config.ROBLOX_REJOIN_LOAD_TIMEOUT:.0f}s of pressing Play.")
+    return False
+
+
 def handle_disconnect_if_present(screenshot):
     """
     Checks whether the disconnect ("Reconnect"/"Cancel") popup is on screen. If it is,
@@ -42,6 +112,8 @@ def handle_disconnect_if_present(screenshot):
         image_bytes=health.jpg_bytes(screenshot),
     )
 
+    reconnect_clicks = 0
+    rejoin_attempts = 0
     while not config.STOP_REQUESTED:
         current_shot = capture_screen()
 
@@ -73,10 +145,38 @@ def handle_disconnect_if_present(screenshot):
             return False
 
         reconnect_match = find_template(current_shot, config.RECONNECT_BTN, config.MATCH_THRESHOLD, debug_label="reconnect_btn")
+        if reconnect_match and reconnect_clicks >= config.RECONNECT_TRIES_BEFORE_REJOIN:
+            # Reconnect alone can loop forever (live 2026-10-08: over 2 hours). Leave and
+            # come back in through Roblox's home screen instead; if that fails too, a few
+            # more Reconnect clicks, then the rejoin again.
+            rejoin_attempts += 1
+            notify.send(f"Reconnect didn't work after {reconnect_clicks} tries - leaving and rejoining the game "
+                        f"through Roblox's home screen (attempt {rejoin_attempts}).",
+                        category="problems", title="Rejoining the game", good=None,
+                        image_bytes=health.jpg_bytes(current_shot))
+            if rejoin_via_home():
+                stats.SESSION.disconnect()
+                down_for = stats.format_duration(time.time() - started_at)
+                print(f"[Reconnect] Rejoined! Back at the lobby after {down_for}.")
+                notify.send(f"Rejoined through Roblox's home screen - back at the lobby after **{down_for}**. "
+                            f"Resuming.", category="problems", title="Reconnected", good=True)
+                return True
+            path = health.save_debug_screenshot(f"rejoin_failed_{rejoin_attempts}")
+            print(f"[Reconnect] Rejoining didn't work (screen saved: {path}) - back to Reconnect for now.")
+            reconnect_clicks = 0
+            continue
         if reconnect_match:
             x, y, _ = reconnect_match
-            print(f"[Reconnect] Clicking Reconnect at ({x}, {y}).")
+            reconnect_clicks += 1
+            print(f"[Reconnect] Clicking Reconnect at ({x}, {y}) (try {reconnect_clicks}).")
             click_at(x, y, clicks=2)
+        elif reconnect_clicks and not _at_lobby(current_shot) and (
+                _find(current_shot, config.ROBLOX_HOME_BTN) or _find(current_shot, config.ROBLOX_SEARCH_BAR)):
+            # Thrown out to Roblox's home screen with no popup at all: rejoin from here.
+            if rejoin_via_home():
+                stats.SESSION.disconnect()
+                print("[Reconnect] Rejoined from Roblox's home screen.")
+                return True
         else:
             print("[Reconnect] Popup not visible - waiting for the lobby to finish loading...")
 
