@@ -1892,6 +1892,53 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.toast("Couldn't capture", str(e), "error")
 
+    def bring_over_data(self):
+        """
+        Settings › Bring over data from another folder: copies an older install's recordings,
+        walks, challenge links and settings into this one (modules/migrate.py), then reloads
+        the settings in place. True if something was brought over.
+        """
+        from PySide6.QtWidgets import QFileDialog
+        from modules import migrate
+        if self.engine.running:
+            self.toast("The bot is running", "Stop it before bringing data over.", "warning")
+            return False
+        start = (migrate.find_previous_installs() or [{"path": os.path.dirname(settings.base_dir())}])[0]["path"]
+        folder = QFileDialog.getExistingDirectory(self, "Pick your old Lucki's Macro folder", start)
+        if not folder:
+            return False
+        if os.path.normcase(os.path.abspath(folder)) == os.path.normcase(os.path.abspath(settings.base_dir())):
+            dialogs.message(self, "Bring over data", "That's this copy's own folder - pick the OLD one.")
+            return False
+        if not migrate._has_data(folder):
+            dialogs.message(self, "Bring over data", "That folder has no Lucki's Macro data in it (no settings.json "
+                                                    "or presets folder). Pick the folder the old exe is in.")
+            return False
+        replace = dialogs.confirm(self, "Recordings you already have here",
+                                  "If a recording exists in both folders, use the OLD folder's copy?\n\n"
+                                  "No keeps the ones here and only adds what's missing.", "Use the old ones")
+        try:
+            result = migrate.copy_data_from(folder, replace_recordings=replace, replace_settings=True)
+        except OSError as e:
+            dialogs.message(self, "Bring over data", f"Couldn't copy the files: {e}")
+            return False
+        # The copied settings.json replaces what's in memory (same dict object, so every page
+        # and dialog holding it sees the new values), then everything that reads it re-applies.
+        fresh = settings.load()
+        self.user_settings.clear()
+        self.user_settings.update(fresh)
+        self.apply_notification_settings(self.user_settings.get("discord_webhook", ""))
+        self.apply_bot_settings()
+        self._restore_ui_state()
+        for page in self.pages.values():
+            page.on_shown()
+        msg = (f"{result['recordings']} recording(s) brought over"
+               + (f", {result['skipped']} kept as they were" if result["skipped"] else "")
+               + (", settings" if result["settings"] else "") + (", challenge links" if result["links"] else "") + ".")
+        self.log(f"Brought data over from {folder}: {msg}")
+        self.toast("Data brought over", msg, "success", 8000)
+        return True
+
     def restore_my_data(self):
         result = dialogs.restore_backup(self)
         if result is None:
