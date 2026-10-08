@@ -6,3 +6,4 @@ opencv-python==5.0.0.93
 PyDirectInput==1.0.4
 pynput==1.8.2
 pywin32==311
+discord.py>=2.4

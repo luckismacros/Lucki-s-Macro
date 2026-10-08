@@ -705,6 +705,72 @@ class SettingsSheet(FloatingDialog):
         test.clicked.connect(send_test)
         self._apply_discord = apply
         col.addWidget(sec)
+        self._discord_bot_section(col)
+
+    def _discord_bot_section(self, col):
+        sec = _Section("DISCORD BOT - REMOTE CONTROL")
+        sec.col.addWidget(label("Control the macro from Discord: /status, /screenshot, /log, /stop, /start, "
+                                "/restart, /lobby. Make a bot at discord.com/developers (Bot › Reset Token), "
+                                "invite it to your server, then paste its token and YOUR Discord user ID "
+                                "(Developer Mode on › right-click your name › Copy User ID). Only that user "
+                                "can give it commands.", "muted", wrap=True))
+        enabled = ToggleRow("Remote control on", None, bool(self.s.get("discord_bot_enabled", False)))
+        sec.col.addWidget(enabled)
+
+        token = QLineEdit(self.s.get("discord_bot_token", ""))
+        token.setEchoMode(QLineEdit.Password)
+        token.setPlaceholderText("Bot token")
+        token.setMinimumHeight(38)
+        sec.col.addWidget(token)
+        owner = QLineEdit(str(self.s.get("discord_owner_id", "")))
+        owner.setPlaceholderText("Your Discord user ID (a long number)")
+        owner.setMinimumHeight(38)
+        sec.col.addWidget(owner)
+        sec.col.addWidget(label("The token is a password for the bot - never share it or post it anywhere.",
+                                "hint", wrap=True))
+
+        row = QHBoxLayout()
+        connect = Button("Connect", "subtle", icon="bell", height=34)
+        row.addWidget(connect)
+        status = label("", "hint")
+        row.addWidget(status, 1)
+        sec.col.addLayout(row)
+
+        def apply_bot(_=None):
+            self.s["discord_bot_enabled"] = enabled.isChecked()
+            self.s["discord_bot_token"] = token.text().strip()
+            self.s["discord_owner_id"] = owner.text().strip()
+            settings.save(self.s)
+            self.host.apply_bot_settings()
+
+        def refresh_status():
+            bot = getattr(self.host, "discord_bot", None)
+            state = bot.state if bot else "off"
+            text = {"online": "Online - try /status in Discord.", "connecting": "Connecting...",
+                    "off": "Off.", "bad token": "Discord refused that token - copy it again."}.get(state, state)
+            ok = state == "online"
+            bad = state == "bad token" or state.startswith("error")
+            status.setText(text)
+            color = theme.SUCCESS_TEXT if ok else (theme.DANGER_TEXT if bad else theme.TEXT_MUTED)
+            status.setStyleSheet(f"color: {color}; font-size: 12px;")
+
+        def connect_now():
+            if not owner.text().strip().isdigit():
+                status.setText("The user ID is a number - Developer Mode › right-click your name › Copy User ID.")
+                status.setStyleSheet(f"color: {theme.DANGER_TEXT}; font-size: 12px;")
+                return
+            enabled.setChecked(True)
+            apply_bot()
+
+        connect.clicked.connect(connect_now)
+        enabled.toggled.connect(apply_bot)
+        timer = QTimer(sec)
+        timer.timeout.connect(refresh_status)
+        timer.start(1000)
+        refresh_status()
+        self._apply_bot = lambda: (self.s.__setitem__("discord_bot_token", token.text().strip()),
+                                   self.s.__setitem__("discord_owner_id", owner.text().strip()))
+        col.addWidget(sec)
 
     # --- Look
 
@@ -1094,6 +1160,8 @@ class SettingsSheet(FloatingDialog):
     def done(self, result):
         if hasattr(self, "_apply_discord"):
             self._apply_discord()
+        if hasattr(self, "_apply_bot"):
+            self._apply_bot()
         settings.save(self.s)
         super().done(result)
 
