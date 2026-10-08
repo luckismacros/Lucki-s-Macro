@@ -204,6 +204,79 @@ def _field(text):
 
 
 # ----------------------------------------------------------------------------- import / export
+# The logic lives in modules/preset_io.py; these are only the file pickers and questions.
+
+def export_recording(parent, location_key, variant_key, preset_name):
+    """⋯ › Export this recording. Returns the file written, or None."""
+    from modules import preset_io
+    dest, _ = QFileDialog.getSaveFileName(parent, "Export recording", f"{preset_name}.json",
+                                          "Lucki's Macro recording (*.json)")
+    if not dest:
+        return None
+    try:
+        preset_io.export_one(location_key, variant_key, preset_name, dest)
+    except (ValueError, OSError) as e:
+        message(parent, "Export", f"Couldn't export it: {e}")
+        return None
+    return dest
+
+
+def import_into_slot(parent, location_key, variant_key):
+    """
+    ⋯ › Import into this slot: any recording file goes into the slot the menu was opened
+    on - whatever the file says it was made for. Returns the saved name, or None.
+    """
+    from modules import preset_io
+    source, _ = QFileDialog.getOpenFileName(parent, "Import a recording into this slot", "",
+                                            "Recordings (*.json)")
+    if not source:
+        return None
+    try:
+        rec = preset_io.read_recording(source)
+    except ValueError as e:
+        message(parent, "Import", f"That file can't be imported: {e}.")
+        return None
+    name = prompt_text(parent, "Import recording", "Name it:",
+                       default=preset_io.unique_name(location_key, variant_key, rec["name"]), ok_text="Import")
+    if not name:
+        return None
+    name = preset_core.sanitize_preset_name(name)
+    if os.path.exists(preset_core.preset_path(location_key, variant_key, name)) and not confirm(
+            parent, "Replace it?", f"A recording called '{name}' already exists here. Replace it?",
+            "Replace", danger=True):
+        return None
+    try:
+        return preset_io.import_into_slot(location_key, variant_key, name, rec["actions"])
+    except OSError as e:
+        message(parent, "Import", f"Couldn't save it: {e}")
+        return None
+
+
+def restore_backup(parent):
+    """Settings › Restore from a backup. Returns (written, kept) or None."""
+    from modules import preset_io
+    source, _ = QFileDialog.getOpenFileName(parent, "Restore recordings", os.path.join(os.path.expanduser("~"), "Desktop"),
+                                            "Backup or recording (*.zip *.json)")
+    if not source:
+        return None
+    try:
+        items = preset_io.plan_restore(source)
+    except ValueError as e:
+        message(parent, "Restore", f"Nothing to restore: {e}.")
+        return None
+    existing = sum(1 for i in items if i["exists"])
+    replace = False
+    if existing:
+        replace = confirm(parent, "Some are already here",
+                          f"{len(items)} file(s) in the backup - {existing} of them you already have.\n\n"
+                          f"Replace yours with the backup's? (No keeps yours and only adds the new ones.)",
+                          "Replace mine", danger=True)
+    try:
+        return preset_io.apply_restore(items, replace)
+    except OSError as e:
+        message(parent, "Restore", f"Couldn't write the files: {e}")
+        return None
+
 
 def export_stage_preset(parent, location_key, variant_key, preset_name):
     """Same file format as modules/preset_share.export_stage_preset."""
@@ -1062,13 +1135,23 @@ class SettingsSheet(FloatingDialog):
 
         sec_b = _Section("BACK UP YOUR DATA")
         sec_b.col.addWidget(label("Saves your recordings, movement presets, challenge links and settings (not "
-                                  "your Discord link) to one zip on your Desktop. Good habit before updating, "
+                                  "your Discord link or bot token) to one zip on your Desktop - Restore puts them "
+                                  "back, on this PC or another one. Good habit before updating, "
                                   "reinstalling Windows, or trying anything you're not sure about.",
                                   "muted", wrap=True))
         backup_btn = Button("Back up my data", "subtle", icon="download", height=34, font_px=12)
         backup_btn.setFocusPolicy(Qt.NoFocus)
         backup_btn.clicked.connect(lambda: self.host.backup_my_data())
-        sec_b.col.addWidget(backup_btn, 0, Qt.AlignLeft)
+        restore_btn = Button("Restore from a backup…", "subtle", icon="download", height=34, font_px=12)
+        restore_btn.setFocusPolicy(Qt.NoFocus)
+        restore_btn.setToolTip("Puts every recording from a backup zip (or one exported recording) back where it "
+                               "belongs. You choose whether to replace recordings you already have.")
+        restore_btn.clicked.connect(lambda: self.host.restore_my_data())
+        b_row = QHBoxLayout()
+        b_row.addWidget(backup_btn)
+        b_row.addWidget(restore_btn)
+        b_row.addStretch(1)
+        sec_b.col.addLayout(b_row)
         col.addWidget(sec_b)
 
         sec = _Section("FILES")

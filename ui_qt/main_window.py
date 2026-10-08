@@ -885,6 +885,15 @@ class MainWindow(QMainWindow):
     def bot_log(self, lines=25):
         return "\n".join(logger.recent_lines(int(lines)))
 
+    def bot_logfile(self):
+        """The log files + newest debug screenshots as one zip (bytes), for Discord /logfile."""
+        from modules import crash_report
+        try:
+            return crash_report.bundle_for_sharing()
+        except Exception as e:
+            print(f"[DiscordBot] Couldn't bundle the logs: {type(e).__name__}: {e}")
+            return None
+
     def bot_stop(self):
         # Never behind the lock: /stop must be able to interrupt a long /reset or /lobby.
         busy = self._bot_busy_with
@@ -1883,6 +1892,17 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.toast("Couldn't capture", str(e), "error")
 
+    def restore_my_data(self):
+        result = dialogs.restore_backup(self)
+        if result is None:
+            return
+        written, kept = result
+        self.log(f"Restore: {written} file(s) restored" + (f", {kept} of yours kept." if kept else "."))
+        self.toast("Restored", f"{written} file(s) restored" + (f", kept {kept} of yours." if kept else "."),
+                   "success", 7000)
+        for page in self.pages.values():
+            page.on_shown()
+
     def backup_my_data(self):
         """
         Zips presets/, movement_presets/, challenge_links.json and settings.json
@@ -1907,7 +1927,9 @@ class MainWindow(QMainWindow):
         if not os.path.isdir(desktop):
             desktop = base
         dest = os.path.join(desktop, f"Lucki's Macro backup {time.strftime('%Y-%m-%d %H-%M')}.zip")
-        safe = {k: v for k, v in self.user_settings.items() if k != "discord_webhook"}
+        # Secrets stay out: the webhook, and the Discord bot's token (whoever has it controls
+        # this PC through the bot).
+        safe = {k: v for k, v in self.user_settings.items() if k not in ("discord_webhook", "discord_bot_token")}
         safe["discord_webhook_set"] = bool(self.user_settings.get("discord_webhook"))
         try:
             with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
