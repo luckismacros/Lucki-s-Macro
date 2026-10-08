@@ -5,6 +5,8 @@ __pycache__/
 build/
 dist/
 dist_nuitka/
+dist_next/
+build_next/
 *.zip
 
 # Per-install / personal data - never committed, see memory/protect-user-data.md.
