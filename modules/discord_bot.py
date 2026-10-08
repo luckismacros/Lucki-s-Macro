@@ -123,16 +123,31 @@ class DiscordBot:
                 print("[DiscordBot] Discord says the bot needs an intent it isn't allowed - this shouldn't "
                       "happen (only default intents are used).")
                 return
-            except Exception as e:
+            except (Exception, asyncio.CancelledError) as e:
+                # CancelledError isn't an Exception (it's a BaseException): it used to escape
+                # here, end this thread for good and get reported as a crash. It's what a
+                # stop() mid-connect (pressing Connect again, closing Settings) looks like -
+                # quiet then - or a connection cut off mid-way, which is just retried.
                 if self._stop.is_set():
                     break
                 self.state = f"error: {type(e).__name__}"
-                print(f"[DiscordBot] Connection dropped ({type(e).__name__}: {e}) - retrying in {backoff}s.")
+                print(f"[DiscordBot] Connection dropped ({type(e).__name__}: {str(e) or 'cancelled'}) - "
+                      f"retrying in {backoff}s.")
             finally:
                 try:
                     if not client.is_closed():
                         loop.run_until_complete(client.close())
-                except Exception:
+                except BaseException:
+                    pass
+                try:
+                    # Anything still pending would be destroyed with the loop ("Task was
+                    # destroyed but it is pending!" in the log) - cancel and let it finish.
+                    pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                except BaseException:
                     pass
                 loop.close()
                 self._loop = self._client = None
