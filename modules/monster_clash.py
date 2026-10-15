@@ -269,6 +269,9 @@ class MonsterClashRunner:
             print("[MonsterClash] Picking up inside the rift (the run restarted during it).")
         self._match_started_at = 0.0
         self._warned_auto_retry = False
+        # How long a match may go with no recognised end before it counts as stuck (Gem
+        # Farm's 40-50s matches use a much shorter one - see modules/gem_farm.py).
+        self.match_stuck_timeout = config.match_stuck_timeout()
         # Borrowed for its Settings -> Teleport to Spawn routine (the same menu on every map).
         self._spawn = BossRushRunner(None, None, {}, set_phase=set_phase)
 
@@ -573,7 +576,7 @@ class MonsterClashRunner:
         result = poll_until([target(config.VICTORY_TEXT, "VICTORY", debug_label="victory"),
                              target(config.DEFEAT_TEXT, "DEFEAT", debug_label="defeat")],
                             interval=1.0, label="monster_clash_match_result",
-                            stuck_timeout=config.match_stuck_timeout(), custom_check=_other_end,
+                            stuck_timeout=self.match_stuck_timeout, custom_check=_other_end,
                             lobby_grace=8.0, game_results=False)
         if result in (False, "RECONNECTED"):
             return result

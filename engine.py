@@ -1588,7 +1588,7 @@ class BotEngine:
         finally:
             self._cleanup()
 
-    def run_monster_clash(self, mode, walk_preset_name):
+    def run_monster_clash(self, mode, walk_preset_name, _runner_factory=None, _label="Monster Clash"):
         """
         Farms the Monster Clash event in one of two modes (config.MONSTER_CLASH_MODES):
           "farm" - the game's Auto Start/Auto Retry repeat the stage; this keeps it alive.
@@ -1607,9 +1607,13 @@ class BotEngine:
             if not self.ui.focus_and_pin():
                 return
 
-            runner = MonsterClashRunner(mode, walk_preset_name, set_phase=self.set_phase)
+            runner = (_runner_factory(self.set_phase) if _runner_factory
+                      else MonsterClashRunner(mode, walk_preset_name, set_phase=self.set_phase))
             self.ui.calibrate_ui_scale(capture_screen())
-            if mode == "rift":
+            if _runner_factory:
+                self.log(f"{_label}. The game's Auto Start and Auto Retry should be ON; the macro keeps the run "
+                         f"alive (reconnects, anti-AFK clicks) and counts the matches.")
+            elif mode == "rift":
                 self.log(f"Monster Clash - Rift hunt, helicopter walk '{walk_preset_name}'. The game's Auto Start "
                          f"and Auto Retry must be OFF.")
             else:
@@ -1629,8 +1633,8 @@ class BotEngine:
                             continue
                         if config.STOP_REQUESTED:
                             return
-                        self.log("Failed to get into Monster Clash 3 times in a row.")
-                        _mark_failure("MONSTER CLASH NAVIGATION FAILED")
+                        self.log(f"Failed to get into {_label} 3 times in a row.")
+                        _mark_failure(f"{_label.upper()} NAVIGATION FAILED")
                         return
                     self._nav_failures = 0
                     need_nav = False
@@ -1656,7 +1660,7 @@ class BotEngine:
                         need_nav = True
                         continue
                     if not result:
-                        _mark_failure("MONSTER CLASH START FAILED")
+                        _mark_failure(f"{_label.upper()} START FAILED")
                         return
                     step = "match"
 
@@ -1667,7 +1671,7 @@ class BotEngine:
                         need_nav = True
                         continue
                     if not result:
-                        _mark_failure("MONSTER CLASH MATCH FAILED")
+                        _mark_failure(f"{_label.upper()} MATCH FAILED")
                         return
                     if self._limit_reached():
                         return
@@ -1683,7 +1687,7 @@ class BotEngine:
                         need_nav = True
                         continue
                     if not result:
-                        _mark_failure("MONSTER CLASH NEXT STAGE FAILED")
+                        _mark_failure(f"{_label.upper()} NEXT STAGE FAILED")
                         return
                     # Farm: the next match is already running (Auto Retry) or was just
                     # started. Rift: a stage with Start Game to press is next.
@@ -1788,6 +1792,15 @@ class BotEngine:
         if not self.user_stop_requested:
             config.STOP_REQUESTED = False
             config.STUCK_DETECTED = None
+
+    def run_gem_farm(self):
+        """
+        Gem Farm (Others page): King's Tomb Master on Auto Play with the game's Auto Start
+        and Auto Retry on - Monster Clash Farm's loop with its own way in (modules/gem_farm.py).
+        """
+        from modules.gem_farm import GemFarmRunner
+        return self.run_monster_clash("farm", None, _runner_factory=lambda sp: GemFarmRunner(set_phase=sp),
+                                      _label="Gem Farm")
 
     def _supervised_run(self, target, args):
         """
