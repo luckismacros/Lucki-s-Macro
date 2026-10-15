@@ -140,6 +140,20 @@ def load():
     return merged
 
 
+# Settings that are passwords: never written to anything meant to be shared (the problem
+# report, the backup zip). The Discord webhook lets anyone post in that channel; the bot
+# token lets anyone control this PC through the bot.
+SECRET_KEYS = ("discord_webhook", "discord_bot_token")
+
+
+def without_secrets(values):
+    """A copy of `values` safe to share: secrets removed, with a note whether each was set."""
+    safe = {k: v for k, v in dict(values).items() if k not in SECRET_KEYS}
+    for key in SECRET_KEYS:
+        safe[f"{key}_set"] = bool(values.get(key))
+    return safe
+
+
 def _read(path):
     if not os.path.exists(path):
         return None

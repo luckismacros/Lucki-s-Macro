@@ -813,6 +813,25 @@ class MainWindow(QMainWindow):
         else:
             self.discord_bot.stop()
 
+    def _to_lobby_any_way(self, next_mode=None, timeout=60.0):
+        """
+        Back to the lobby, whatever the game is showing. lobby.return_to_lobby() knows the
+        result / party / summary screens; a run that ends mid-stage (Monster Clash Farm and
+        Gem Farm repeat by themselves, so there's often no result screen at all) has none of
+        those, and used to stop the queue with COULD NOT RETURN TO LOBBY. Then: leave the
+        game and rejoin through Roblox's home screen, which always ends at the lobby.
+        """
+        if lobby.return_to_lobby(timeout=timeout, log=self.log, next_mode=next_mode):
+            return True
+        if config.STOP_REQUESTED:
+            return False
+        from modules import reconnect
+        self.log("The usual way back to the lobby didn't work from this screen - leaving the game and "
+                 "rejoining instead.")
+        ok, msg = reconnect.leave_and_rejoin()
+        self.log(f"Back to the lobby: {msg}")
+        return ok
+
     def _bot_action(self, name, fn):
         """
         Runs a state-changing command (start/stop/restart/lobby/reset) - one at a time. Two
@@ -972,7 +991,7 @@ class MainWindow(QMainWindow):
             return False, "Couldn't find/focus the Roblox window - is Roblox running?"
         if lobby.at_lobby():
             return True, "Already at the lobby."
-        ok = lobby.return_to_lobby(timeout=120.0, log=self.log)
+        ok = self._to_lobby_any_way(timeout=120.0)
         if ok:
             return True, "Back at the lobby."
         if config.STOP_REQUESTED:
@@ -1295,7 +1314,7 @@ class MainWindow(QMainWindow):
             if needs_lobby:
                 self.set_phase("RETURNING TO LOBBY", "#4fc3f7")
                 self.log("Queue: heading back to the lobby for the next step...")
-                if not lobby.return_to_lobby(log=self.log, next_mode=item["mode"]):
+                if not self._to_lobby_any_way(next_mode=item["mode"]):
                     if not config.STOP_REQUESTED:
                         config.STUCK_DETECTED = "COULD NOT RETURN TO LOBBY"
                     self.engine._cleanup()
@@ -1974,10 +1993,8 @@ class MainWindow(QMainWindow):
         if not os.path.isdir(desktop):
             desktop = base
         dest = os.path.join(desktop, f"Lucki's Macro backup {time.strftime('%Y-%m-%d %H-%M')}.zip")
-        # Secrets stay out: the webhook, and the Discord bot's token (whoever has it controls
-        # this PC through the bot).
-        safe = {k: v for k, v in self.user_settings.items() if k not in ("discord_webhook", "discord_bot_token")}
-        safe["discord_webhook_set"] = bool(self.user_settings.get("discord_webhook"))
+        # Secrets stay out (settings.SECRET_KEYS: the webhook and the Discord bot's token).
+        safe = settings.without_secrets(self.user_settings)
         try:
             with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
                 z.writestr("settings_without_webhook.json", json.dumps(safe, indent=2))
@@ -2020,8 +2037,9 @@ class MainWindow(QMainWindow):
         if not os.path.isdir(desktop):
             desktop = base
         dest = os.path.join(desktop, f"Lucki's Macro report {time.strftime('%Y-%m-%d %H-%M')}.zip")
-        safe = {k: v for k, v in self.user_settings.items() if k != "discord_webhook"}
-        safe["discord_webhook_set"] = bool(self.user_settings.get("discord_webhook"))
+        # No secrets in something meant to be sent to someone (settings.SECRET_KEYS: the
+        # webhook and the Discord bot's token - whoever has that controls this PC).
+        safe = settings.without_secrets(self.user_settings)
         lines = [f"Created {time.strftime('%Y-%m-%d %H:%M:%S')}",
                  f"DPI awareness: {self.dpi_result}",
                  f"Game size: {self.dock_state.game_size}, docked: {self.dock_state.docked}, compact: {self.compact}",

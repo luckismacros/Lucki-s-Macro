@@ -1667,7 +1667,7 @@ class BotEngine:
                 if step == "match":
                     result = runner.play_match()
                     if result == "RECONNECTED":
-                        self.log("Disconnected mid-match - reconnected. Rejoining...")
+                        self.log("Lost the stage (disconnect, kick or a stray screen) - getting back onto it...")
                         need_nav = True
                         continue
                     if not result:
