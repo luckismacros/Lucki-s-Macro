@@ -980,7 +980,7 @@ class MainWindow(QMainWindow):
         return False, "Couldn't get back to the lobby within 2 minutes - see the screenshot."
 
     # Modes /mode can start: every page with a run of its own (not "Others").
-    BOT_MODES = [(key, label) for key, label, _ in NAV if key != "others"]
+    BOT_MODES = [(key, "Gem Farm" if key == "others" else label) for key, label, _ in NAV]
 
     def bot_mode(self, key, monster_clash_mode=None):
         return self._bot_action("mode", lambda: self._bot_mode(key, monster_clash_mode))

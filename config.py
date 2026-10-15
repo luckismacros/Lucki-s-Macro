@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "3.3"
+APP_VERSION = "3.4"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -810,7 +810,7 @@ GAMEMODES = {
     "portals":     {"label": "Portals",     "enabled": True},
     "bossrush":    {"label": "Boss Rush",   "enabled": True},
     "monsterclash": {"label": "Monster Clash", "enabled": True},
-    "others":      {"label": "Others",      "enabled": False},
+    "others":      {"label": "Gem Farm",    "enabled": True},     # the Others page (modules/gem_farm.py)
 }
 
 # How often to click Reconnect on the disconnect popup while waiting to get back in.

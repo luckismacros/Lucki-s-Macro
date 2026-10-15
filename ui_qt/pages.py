@@ -473,7 +473,7 @@ class ModePage(QWidget):
         return card
 
     def finish(self):
-        if self.runs is None and self.key not in ("others", "queue"):
+        if self.runs is None and self.key != "queue":
             self.runs = self.add_card(RunsCard(len(self.cards) + 1, unit=self.runs_unit,
                                                 unit_hint=self.runs_unit_hint, choices=self.runs_choices))
             self.runs.changed.connect(self.emit_changed)
@@ -1329,22 +1329,34 @@ class MonsterClashPage(ModePage):
 
 
 class OthersPage(ModePage):
+    """
+    Others › Gem Farm: King's Tomb's Master stage on the game's Auto Play, repeated by the
+    game's own Auto Start + Auto Retry (100 gems every 40-50s). The macro gets there and keeps
+    it alive - see modules/gem_farm.py.
+    """
     key = "others"
+    runs_unit_hint = "Each win is about 100 gems."
 
     def __init__(self, host):
         super().__init__(host)
-        c = self.add_card(StepCard(1, "Coming soon"))
-        c.body.addWidget(label("Nothing to farm here yet.", "hint"))
+        c = self.add_card(StepCard(1, "Gem Farm"))
+        c.body.addWidget(label("King's Tomb - Master stage, on the game's Auto Play. About 100 gems every "
+                               "40-50 seconds.", "muted", wrap=True))
+        c.body.addWidget(label("In the game, turn Auto Start and Auto Retry ON first. The macro goes Play › "
+                               "Story › King's Tomb › Master, turns Auto Play on, and from then on just keeps "
+                               "it going: reconnects if you get disconnected, and clicks every few minutes so "
+                               "Roblox doesn't kick you for being idle.", "hint", wrap=True))
+        c.set_done(True)
         self.finish()
 
     def checks(self):
-        return [("Mode", "bad", "not available yet")]
+        return [("Units", "ok", "the game's Auto Play")]
 
     def run_spec(self):
-        raise ValueError("This mode isn't available yet.")
+        return "run_gem_farm", (), [("Gamemode", "Gem Farm"), ("Stage", "King's Tomb - Master")]
 
     def summary(self):
-        return "Not available yet"
+        return "Gem Farm - King's Tomb Master, Auto Play"
 
 
 # ----------------------------------------------------------------------------- queue
