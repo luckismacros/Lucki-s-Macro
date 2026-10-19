@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "3.5.1"
+APP_VERSION = "3.5.2"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -1475,7 +1475,8 @@ SHARKFANG_SLOTS = [f"{SHARKFANG_DIR}/slot_{n}.png" for n in range(1, 7)]
 SHARKFANG_BIN_BTN = f"{SHARKFANG_DIR}/bin.png"
 SHARKFANG_TOOTH = f"{SHARKFANG_DIR}/tooth.png"                       # Sharktooth Conch in a slot
 # The storm dial at the moment to use the tooth: the inside of the dial only (no map behind
-# it), purple quarter at the top right. Also checked by colour - see SHARKFANG_STORM_PATCHES.
+# it), purple quarter at the top right. Finds the dial; whether the quarter is exactly there
+# is SHARKFANG_STORM_POINTS' job.
 SHARKFANG_STORM = f"{SHARKFANG_DIR}/storm.png"
 SHARKFANG_OBTAINED = f"{SHARKFANG_DIR}/sharkfang_obtained.png"       # the Sharkfang card on Obtained Rewards
 # The popup's title. Other rewards can show it too, so it only counts right after the tooth.
@@ -1491,21 +1492,23 @@ TEMPLATE_THRESHOLDS.update({
     SHARKFANG_RESTART_BTN: 0.78,
     SHARKFANG_BIN_BTN: 0.75,
     SHARKFANG_TOOTH: 0.75,
-    SHARKFANG_STORM: 0.88,                   # has to be this exact dial - a turned wedge drops well below
+    SHARKFANG_STORM: 0.80,                   # real dial 0.98; turned 10 degrees 0.67, 25 degrees 0.55
     SHARKFANG_OBTAINED: 0.75,
     SHARKFANG_OBTAINED_TITLE: 0.75,
     SHARKFANG_EMPTY_BAR: 0.80,
 })
 for _path in SHARKFANG_SLOTS:
     TEMPLATE_THRESHOLDS[_path] = 0.80        # only ever checked at that slot's own spot
-# The dial's colours must match too, not only its shape (template matching ignores colour).
-EXACT_MATCH_TEMPLATES[SHARKFANG_STORM] = 35
-
-# The storm dial's quarters, as (x, y) inside storm.png and the colour each must be: the
-# top right purple, the other three gold. Measured on storm.png - purple there is BGR
-# (102, 27, 39), gold (64, 119, 140) / (30, 97, 134) / (41, 93, 117).
+# Points around the dial's rim, as (x, y) inside storm.png, and the colour each must be -
+# all of them, or the tooth isn't used. Purple from just past 12 to just before 3 o'clock,
+# gold just outside both edges and on the left: the purple quarter has to be exactly at the
+# top right - 10 degrees too wide or too narrow at either edge fails. (The
+# lower half is the "Storm" icon, so nothing is read there.) Measured on storm.png: purple
+# about BGR (107, 31, 38), gold about (55, 114, 140).
 SHARKFANG_STORM_SIZE = 67                    # storm.png is 67x67
-SHARKFANG_STORM_PATCHES = [((50, 12), "purple"), ((12, 12), "gold"), ((60, 58), "gold"), ((8, 58), "gold")]
+SHARKFANG_STORM_POINTS = [((37, 10), "purple"), ((42, 12), "purple"), ((52, 18), "purple"), ((59, 30), "purple"),
+                          ((59, 34), "purple"), ((59, 42), "gold"), ((58, 46), "gold"), ((6, 44), "gold"),
+                          ((9, 23), "gold"), ((23, 12), "gold"), ((28, 10), "gold")]
 
 # Where the 6 slot centres sit from the empty bar's centre (reference px, measured on
 # empty_bar.png): first slot 241 left of it, then every 96.7.
@@ -1522,6 +1525,15 @@ SHARKFANG_BAR_CHECK_SECONDS = 30.0
 # A slot whose tooth score is at least this, but under the tooth's own bar, is left alone:
 # binning the tooth by mistake costs far more than leaving one piece of junk.
 SHARKFANG_TOOTH_CAUTION = 0.55
+# An empty slot is dark and flat (measured on empty_bar.png: brightness 56 on average, under
+# 1% of it bright); items are bright and colourful (the tooth: 154, 48% bright). The empty-
+# slot pictures alone missed real empty slots 2, 3 and 5 on a live run (2026-10-20), so a
+# slot this dark also counts as empty.
+SHARKFANG_EMPTY_MAX_BRIGHTNESS = 90
+SHARKFANG_EMPTY_MAX_BRIGHT_SHARE = 0.04
+# The reward popup closes on a click anywhere; this far below the Sharkfang card is its own
+# "(Click anywhere to close)" line (measured on obtainment_example.png).
+SHARKFANG_OBTAINED_CLOSE_DY = 109
 # No tooth this long into a match -> restart it (about wave 70). With a tooth, the match
 # goes on until the storm comes and the tooth is used, however long that takes.
 SHARKFANG_MATCH_LIMIT_SECONDS = 18 * 60.0
