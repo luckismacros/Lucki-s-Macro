@@ -6,13 +6,14 @@ module, its config block (SHARKFANG_*), assets/templates/sharkfang/, run_sharkfa
 engine.py and the Sharkfang option on the Others page.
 
 As described by the player (2026-10-19):
-  Joining: Events -> Tidal Siege -> Event Gamemode -> Select Stage -> Start.
+  Joining: Events -> Tidal Siege -> Event Gamemode -> Event Mode (on Mode Selection) ->
+  Select Stage -> Start.
   On the stage (the Summer portal's map): camera, walk to the fishing spot (the Summer
   portal's own Auto Play fishing walk), Auto Play on, Start Game - and FISH. Fishing is
   the whole point of the mode; everything else hangs off the catch.
-  The bar isn't empty when a match starts, so fish 3 minutes first. Then, every 3
-  minutes: anything in the bar's 6 slots is dragged onto the bin, except the Sharktooth
-  Conch (the tooth), which is kept.
+  The bar isn't empty when a match starts, so fish 3 minutes first. From then on the bar
+  is checked every 30 seconds: anything in its 6 slots is dragged onto the bin, except the
+  Sharktooth Conch (the tooth), which is kept.
   With a tooth in the bar: once the storm dial looks exactly like storm.png (purple
   quarter at the top right), press the tooth - no confirm, it's used at once - then watch
   for Obtained Rewards with the Sharkfang card.
@@ -28,7 +29,9 @@ Fallbacks, because a missed step costs a whole Sharkfang:
   - The bar is found whole while it's empty, by its empty slots while partly full, or
     from the bin (always on screen) once the distance between the two has been seen -
     that distance is saved to disk, so a later run finds a full bar too.
-  - A drag that didn't take is tried again slower; a missing bin uses where it was last.
+  - Junk is dragged from the rightmost slot, so nothing slides into the emptied slot; a
+    drag that changed nothing is tried once more, slower; a missing bin uses where it was
+    last. A slot that looks even a bit like the tooth is never binned.
   - A tooth press that didn't take is pressed again; after the press, the popup's title
     counts as the reward too.
   - The restart takes either Settings gear; the reward popup in the way is clicked off.
@@ -123,6 +126,12 @@ def click_tidal_siege():
 
 def click_event_gamemode():
     return _click_through(config.SHARKFANG_EVENT_GAMEMODE_BTN, "sharkfang_event_gamemode",
+                          (config.SHARKFANG_EVENT_MODE_CARD, config.SHARKFANG_SELECT_STAGE_BTN))
+
+
+def click_event_mode():
+    """Mode Selection's Event Mode card (not Portal Mode)."""
+    return _click_through(config.SHARKFANG_EVENT_MODE_CARD, "sharkfang_event_mode",
                           (config.SHARKFANG_SELECT_STAGE_BTN,))
 
 
@@ -139,11 +148,13 @@ def click_start():
     return _click_through(config.SHARKFANG_START_BTN, "sharkfang_start")
 
 
-_JOIN_STEPS = [click_events, click_tidal_siege, click_event_gamemode, click_select_stage, click_start]
+_JOIN_STEPS = [click_events, click_tidal_siege, click_event_gamemode, click_event_mode, click_select_stage,
+               click_start]
 # Each menu screen, latest first, with where in _JOIN_STEPS to carry on from.
 _RESUME_AT = [
-    (config.SHARKFANG_START_BTN, 4),
-    (config.SHARKFANG_SELECT_STAGE_BTN, 3),
+    (config.SHARKFANG_START_BTN, 5),
+    (config.SHARKFANG_SELECT_STAGE_BTN, 4),
+    (config.SHARKFANG_EVENT_MODE_CARD, 3),
     (config.SHARKFANG_EVENT_GAMEMODE_BTN, 2),
     (config.SHARKFANG_TIDAL_SIEGE_CARD, 1),
 ]
@@ -161,6 +172,8 @@ class SharkfangRunner(MonsterClashRunner):
         self.match_started_at = time.time()
         self.restart_reason = None        # why play_match() ended: OBTAINED / MATCH_LIMIT / MATCH_OVER
         self._warned_no_bar = False
+        self._warned_unsure = False
+        self._reported_tooth = None
         self._storm_logged_at = 0.0
 
     # --- getting onto the stage ---------------------------------------------------------
@@ -329,12 +342,18 @@ class SharkfangRunner(MonsterClashRunner):
         return _SEEN["bar"]
 
     def _slot_state(self, shot, bar, k):
-        """"empty", "tooth" or "item" (anything else)."""
+        """
+        "empty", "tooth", "unsure" (looks a bit like the tooth - never binned, never used) or
+        "item" (anything else - binned).
+        """
         center = self._slot_center(bar, k)
         if _find_near(shot, config.SHARKFANG_SLOTS[k], center, config.SHARKFANG_SLOT_HALF):
             return "empty"
-        if _find_near(shot, config.SHARKFANG_TOOTH, center, config.SHARKFANG_SLOT_HALF):
+        tooth = _score_near(shot, config.SHARKFANG_TOOTH, center, config.SHARKFANG_SLOT_HALF)
+        if tooth >= config.TEMPLATE_THRESHOLDS[config.SHARKFANG_TOOTH]:
             return "tooth"
+        if tooth >= config.SHARKFANG_TOOTH_CAUTION:
+            return "unsure"
         return "item"
 
     def _tooth_slot(self, shot):
@@ -346,11 +365,17 @@ class SharkfangRunner(MonsterClashRunner):
                 return k
         return None
 
+    def _slot_pixels(self, shot, bar, k):
+        return _roi(shot, self._slot_center(bar, k), config.SHARKFANG_SLOT_HALF - 4)[0].astype("int16")
+
     def _clear_bar(self, shot):
         """
-        Drags everything that isn't the tooth onto the bin, one at a time, reading the bar
-        again after each (the rest may shift along). A drag that didn't take is tried again
-        slower, up to 3 times per slot. Returns (bar found, tooth's slot or None).
+        Drags everything that isn't the tooth onto the bin. Always the rightmost one first,
+        so nothing slides along into the slot just emptied - taking the leftmost made the
+        next item slide into it, which looked like the drag hadn't worked and got the same
+        slot dragged three times (live 2026-10-20). A drag counts as done when the bar holds
+        one item fewer or that slot visibly changed; only a drag that changed nothing is
+        tried once more, slower. Returns (bar found, tooth's slot or None).
         """
         bar = self._bar_center(shot)
         if bar is None:
@@ -360,42 +385,53 @@ class SharkfangRunner(MonsterClashRunner):
                 print(f"[Sharkfang] Can't find the bar yet (all 6 slots full and never seen before) - trying again "
                       f"shortly (screen saved: {path}).")
             return False, None
-        self._phase("CLEARING THE BAR", "#2e7d32")
-        tries = {}
-        states = []
-        for _ in range(14):
-            if config.STOP_REQUESTED:
-                break
-            shot = capture_screen()
-            states = [self._slot_state(shot, bar, k) for k in range(6)]
-            junk = [k for k, state in enumerate(states) if state == "item" and tries.get(k, 0) < 3]
-            if not junk:
+        states = [self._slot_state(shot, bar, k) for k in range(6)]
+        if "item" in states:
+            self._phase("CLEARING THE BAR", "#2e7d32")
+        retried = False
+        for _ in range(8):
+            junk = [k for k, state in enumerate(states) if state == "item"]
+            if not junk or config.STOP_REQUESTED:
                 break
             bin_btn = self._bin(shot)
             if not bin_btn:
                 path = health.save_debug_screenshot("sharkfang_no_bin", shot)
-                print(f"[Sharkfang] Slots {[k + 1 for k in junk]} need clearing but the bin isn't on screen "
-                      f"(screen saved: {path}).")
+                print(f"[Sharkfang] The bar has junk in it but the bin isn't on screen (screen saved: {path}).")
                 break
-            k = junk[0]
-            tries[k] = tries.get(k, 0) + 1
+            k = junk[-1]
+            before = self._slot_pixels(shot, bar, k)
             x, y = self._slot_center(bar, k)
-            if tries[k] == 1:
+            if retried:
+                print(f"[Sharkfang] Slot {k + 1} didn't empty - dragging it once more, slower.")
+                drag_to(x, y, bin_btn[0], bin_btn[1], steps=30, hold=0.35)
+            else:
                 print(f"[Sharkfang] Slot {k + 1}: not the tooth - dragging it onto the bin.")
                 drag_to(x, y, bin_btn[0], bin_btn[1])
+            shot = capture_screen()
+            new_states = [self._slot_state(shot, bar, j) for j in range(6)]
+            after = self._slot_pixels(shot, bar, k)
+            changed = before.shape == after.shape and float(abs(before - after).mean()) > 12.0
+            took = sum(s != "empty" for s in new_states) < sum(s != "empty" for s in states) or changed
+            states = new_states
+            if took:
+                retried = False
+            elif retried:
+                path = health.save_debug_screenshot("sharkfang_drag_failed", shot)
+                print(f"[Sharkfang] Slot {k + 1} won't go in the bin (screen saved: {path}) - trying again at the "
+                      f"next check.")
+                break
             else:
-                print(f"[Sharkfang] Slot {k + 1} is still full - dragging it again, slower (try {tries[k]}/3).")
-                drag_to(x, y, bin_btn[0], bin_btn[1], steps=30, hold=0.35)
-            time.sleep(0.5)
-        left = [k + 1 for k, state in enumerate(states) if state == "item"]
-        if left:
-            path = health.save_debug_screenshot("sharkfang_bar_not_cleared")
-            print(f"[Sharkfang] Couldn't clear slot(s) {left} (screen saved: {path}) - trying again at the next check.")
+                retried = True
         tooth = states.index("tooth") if "tooth" in states else None
-        if tooth is not None:
-            print(f"[Sharkfang] The tooth is in slot {tooth + 1} - keeping it for the storm.")
-        else:
-            print("[Sharkfang] Bar cleared - no tooth yet.")
+        if tooth != self._reported_tooth:
+            self._reported_tooth = tooth
+            if tooth is not None:
+                print(f"[Sharkfang] The tooth is in slot {tooth + 1} - keeping it for the storm.")
+        if "unsure" in states and not self._warned_unsure:
+            self._warned_unsure = True
+            path = health.save_debug_screenshot("sharkfang_unsure_slot", shot)
+            print(f"[Sharkfang] Slot {states.index('unsure') + 1} looks a bit like the tooth - leaving it alone to "
+                  f"be safe (screen saved: {path}).")
         self._phase("FISHING", "#2e7d32")
         return True, tooth
 
@@ -459,10 +495,10 @@ class SharkfangRunner(MonsterClashRunner):
 
         self._phase("FISHING", "#2e7d32")
         ticker = FishingTicker(cast_pos=self.cast_pos)
-        state = {"next_bar": time.time() + config.SHARKFANG_BAR_CHECK_SECONDS, "tooth": None,
+        state = {"next_bar": time.time() + config.SHARKFANG_BAR_FIRST_CHECK_SECONDS, "tooth": None,
                  "pressed_at": None, "presses": 0, "said_waiting": False}
-        print(f"[Sharkfang] Fishing. The bar gets cleared {config.SHARKFANG_BAR_CHECK_SECONDS / 60:.0f} minutes from "
-              f"now and every {config.SHARKFANG_BAR_CHECK_SECONDS / 60:.0f} minutes after.")
+        print(f"[Sharkfang] Fishing. The bar gets cleared {config.SHARKFANG_BAR_FIRST_CHECK_SECONDS / 60:.0f} minutes "
+              f"from now, then checked every {config.SHARKFANG_BAR_CHECK_SECONDS:.0f} seconds.")
 
         def after_press(shot, now):
             """While waiting for the reward: press again if the tooth is still there."""
@@ -502,8 +538,7 @@ class SharkfangRunner(MonsterClashRunner):
                 self._storm_progress_note(shot)
             if now >= state["next_bar"]:
                 found, state["tooth"] = self._clear_bar(shot)
-                wait = config.SHARKFANG_BAR_CHECK_SECONDS if found else config.SHARKFANG_BAR_RETRY_SECONDS
-                state["next_bar"] = time.time() + wait
+                state["next_bar"] = time.time() + config.SHARKFANG_BAR_CHECK_SECONDS
             if now - self.match_started_at >= config.SHARKFANG_MATCH_LIMIT_SECONDS:
                 if state["tooth"] is None:
                     state["tooth"] = self._tooth_slot(shot)

@@ -1363,8 +1363,8 @@ class OthersPage(ModePage):
         self.shark_card.body.addWidget(label("Tidal Siege's Event Gamemode, on the game's Auto Play, fishing the "
                                              "whole time.", "muted", wrap=True))
         self.shark_card.body.addWidget(label(
-            "The macro joins (Events › Tidal Siege › Event Gamemode), walks to the fishing spot with the Summer "
-            "portal's fishing walk, and fishes. Every 3 minutes it drags everything in the bar onto the bin - "
+            "The macro joins (Events › Tidal Siege › Event Gamemode › Event Mode), walks to the fishing spot with the Summer "
+            "portal's fishing walk, and fishes. After 3 minutes it starts keeping the bar empty, dragging everything onto the bin - "
             "except the Sharktooth Conch. With the tooth, it waits for the storm and uses it then. After a "
             "Sharkfang, or 18 minutes without a tooth, it restarts the match.",
             "hint", wrap=True))

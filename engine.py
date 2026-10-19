@@ -1818,7 +1818,7 @@ class BotEngine:
             "farm", None, _label="Sharkfang",
             _runner_factory=lambda sp: SharkfangRunner(walk, tuple(fish_pos), equip_rod, set_phase=sp),
             _intro=f"Sharkfang Farm - fishing at {tuple(fish_pos)} after the Summer portal's fishing walk. "
-                   f"The bar is cleared every {config.SHARKFANG_BAR_CHECK_SECONDS / 60:.0f} minutes, the tooth "
+                   f"The bar is kept empty from {config.SHARKFANG_BAR_FIRST_CHECK_SECONDS / 60:.0f} minutes in, the tooth "
                    f"is used when the storm comes, and the match restarts after a Sharkfang or after "
                    f"{config.SHARKFANG_MATCH_LIMIT_SECONDS / 60:.0f} minutes without a tooth.")
 

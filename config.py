@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "3.5"
+APP_VERSION = "3.5.1"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -1459,6 +1459,10 @@ SHARKFANG_DIR = "assets/templates/sharkfang"
 SHARKFANG_EVENTS_BTN = f"{SHARKFANG_DIR}/events.png"                 # the lobby's Events button
 SHARKFANG_TIDAL_SIEGE_CARD = f"{SHARKFANG_DIR}/tidal_siege.png"      # "Summer Event / Tidal Siege" card
 SHARKFANG_EVENT_GAMEMODE_BTN = f"{SHARKFANG_DIR}/event_gamemode.png"
+# Mode Selection, after Event Gamemode: the Event Mode card's label ("Event Mode / Infinite &
+# Fishing Gamemode!") - the card's art moves (0.69), the label doesn't (0.995 on two captures,
+# 0.41 on Portal Mode's).
+SHARKFANG_EVENT_MODE_CARD = f"{SHARKFANG_DIR}/event_mode.png"
 SHARKFANG_SELECT_STAGE_BTN = f"{SHARKFANG_DIR}/select_stage.png"
 SHARKFANG_START_BTN = f"{SHARKFANG_DIR}/start.png"                   # the party screen's Start
 SHARKFANG_SETTINGS_BTN = f"{SHARKFANG_DIR}/settings.png"             # in-match gear
@@ -1478,7 +1482,7 @@ SHARKFANG_OBTAINED = f"{SHARKFANG_DIR}/sharkfang_obtained.png"       # the Shark
 SHARKFANG_OBTAINED_TITLE = f"{SHARKFANG_DIR}/obtained_title.png"
 
 for _path in (SHARKFANG_EVENTS_BTN, SHARKFANG_TIDAL_SIEGE_CARD, SHARKFANG_EVENT_GAMEMODE_BTN,
-              SHARKFANG_SELECT_STAGE_BTN, SHARKFANG_RESTART_CONFIRM_BTN):
+              SHARKFANG_EVENT_MODE_CARD, SHARKFANG_SELECT_STAGE_BTN, SHARKFANG_RESTART_CONFIRM_BTN):
     # Rescaled crops, as Monster Clash's menu buttons (real sightings there 0.79-0.99).
     TEMPLATE_THRESHOLDS.setdefault(_path, 0.75)
 TEMPLATE_THRESHOLDS.update({
@@ -1511,10 +1515,13 @@ SHARKFANG_SLOT_DY = 1.0
 SHARKFANG_SLOT_HALF = 45                     # half a slot's width/height
 
 # The bar isn't empty when a match starts: the first clear-out is this long after fishing
-# starts, then again every this long.
-SHARKFANG_BAR_CHECK_SECONDS = 180.0
-# If the bar couldn't be found at a check, look again this much sooner.
-SHARKFANG_BAR_RETRY_SECONDS = 30.0
+# starts, then the bar is checked (and cleared if needed) every SHARKFANG_BAR_CHECK_SECONDS -
+# every 3 minutes let it sit full in between (live 2026-10-20), and a full bar stops fishing.
+SHARKFANG_BAR_FIRST_CHECK_SECONDS = 180.0
+SHARKFANG_BAR_CHECK_SECONDS = 30.0
+# A slot whose tooth score is at least this, but under the tooth's own bar, is left alone:
+# binning the tooth by mistake costs far more than leaving one piece of junk.
+SHARKFANG_TOOTH_CAUTION = 0.55
 # No tooth this long into a match -> restart it (about wave 70). With a tooth, the match
 # goes on until the storm comes and the tooth is used, however long that takes.
 SHARKFANG_MATCH_LIMIT_SECONDS = 18 * 60.0
