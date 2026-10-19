@@ -1588,7 +1588,8 @@ class BotEngine:
         finally:
             self._cleanup()
 
-    def run_monster_clash(self, mode, walk_preset_name, _runner_factory=None, _label="Monster Clash"):
+    def run_monster_clash(self, mode, walk_preset_name, _runner_factory=None, _label="Monster Clash",
+                          _intro=None):
         """
         Farms the Monster Clash event in one of two modes (config.MONSTER_CLASH_MODES):
           "farm" - the game's Auto Start/Auto Retry repeat the stage; this keeps it alive.
@@ -1610,7 +1611,9 @@ class BotEngine:
             runner = (_runner_factory(self.set_phase) if _runner_factory
                       else MonsterClashRunner(mode, walk_preset_name, set_phase=self.set_phase))
             self.ui.calibrate_ui_scale(capture_screen())
-            if _runner_factory:
+            if _intro:
+                self.log(_intro)
+            elif _runner_factory:
                 self.log(f"{_label}. The game's Auto Start and Auto Retry should be ON; the macro keeps the run "
                          f"alive (reconnects, anti-AFK clicks) and counts the matches.")
             elif mode == "rift":
@@ -1801,6 +1804,23 @@ class BotEngine:
         from modules.gem_farm import GemFarmRunner
         return self.run_monster_clash("farm", None, _runner_factory=lambda sp: GemFarmRunner(set_phase=sp),
                                       _label="Gem Farm")
+
+    def run_sharkfang(self, fish_pos, equip_rod=False):
+        """
+        Sharkfang Farm (Others page, limited Tidal Siege event): fish on the event stage, keep
+        the tooth, use it in the storm, restart after a Sharkfang or 18 minutes without a tooth -
+        Monster Clash Farm's loop with modules/sharkfang.py's runner. The walk is the Summer
+        portal's.
+        """
+        from modules.sharkfang import SharkfangRunner
+        walk = _autoplay_walk_preset_name(config.SHARKFANG_WALK_CATEGORY)
+        return self.run_monster_clash(
+            "farm", None, _label="Sharkfang",
+            _runner_factory=lambda sp: SharkfangRunner(walk, tuple(fish_pos), equip_rod, set_phase=sp),
+            _intro=f"Sharkfang Farm - fishing at {tuple(fish_pos)} after the Summer portal's fishing walk. "
+                   f"The bar is cleared every {config.SHARKFANG_BAR_CHECK_SECONDS / 60:.0f} minutes, the tooth "
+                   f"is used when the storm comes, and the match restarts after a Sharkfang or after "
+                   f"{config.SHARKFANG_MATCH_LIMIT_SECONDS / 60:.0f} minutes without a tooth.")
 
     def _supervised_run(self, target, args):
         """

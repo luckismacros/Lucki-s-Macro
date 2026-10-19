@@ -1330,33 +1330,125 @@ class MonsterClashPage(ModePage):
 
 class OthersPage(ModePage):
     """
-    Others › Gem Farm: King's Tomb's Master stage on the game's Auto Play, repeated by the
-    game's own Auto Start + Auto Retry (100 gems every 40-50s). The macro gets there and keeps
-    it alive - see modules/gem_farm.py.
+    Others, two farms:
+      Gem Farm  - King's Tomb's Master stage on the game's Auto Play, repeated by the game's own
+                  Auto Start + Auto Retry (100 gems every 40-50s) - modules/gem_farm.py.
+      Sharkfang - the limited Tidal Siege event: fish, bin the junk, use the tooth in the storm,
+                  restart after a Sharkfang or 18 minutes without a tooth - modules/sharkfang.py. Remove this
+                  option when the event ends.
     """
     key = "others"
-    runs_unit_hint = "Each win is about 100 gems."
+    runs_unit_hint = "Gem Farm: each win is about 100 gems. Sharkfang: each Sharkfang obtained."
+
+    _MODES = [("gem", "Gem Farm"), ("sharkfang", "Sharkfang")]
 
     def __init__(self, host):
         super().__init__(host)
-        c = self.add_card(StepCard(1, "Gem Farm"))
-        c.body.addWidget(label("King's Tomb - Master stage, on the game's Auto Play. About 100 gems every "
-                               "40-50 seconds.", "muted", wrap=True))
-        c.body.addWidget(label("In the game, turn Auto Start and Auto Retry ON first. The macro goes Play › "
-                               "Story › King's Tomb › Master, turns Auto Play on, and from then on just keeps "
-                               "it going: reconnects if you get disconnected, and clicks every few minutes so "
-                               "Roblox doesn't kick you for being idle.", "hint", wrap=True))
-        c.set_done(True)
+        c1 = self.add_card(StepCard(1, "What to farm"))
+        self.mode = Segmented(self._MODES, "gem")
+        self.mode.changed.connect(self._on_mode)
+        c1.body.addWidget(self.mode)
+        c1.set_done(True)
+
+        self.gem_card = self.add_card(StepCard(2, "Gem Farm"))
+        self.gem_card.body.addWidget(label("King's Tomb - Master stage, on the game's Auto Play. About 100 gems "
+                                           "every 40-50 seconds.", "muted", wrap=True))
+        self.gem_card.body.addWidget(label("In the game, turn Auto Start and Auto Retry ON first. The macro goes "
+                                           "Play › Story › King's Tomb › Master, turns Auto Play on, and from then on "
+                                           "just keeps it going: reconnects if you get disconnected, and clicks every "
+                                           "few minutes so Roblox doesn't kick you for being idle.", "hint", wrap=True))
+        self.gem_card.set_done(True)
+
+        self.shark_card = self.add_card(StepCard(2, "Sharkfang", label("limited event", "hint")))
+        self.shark_card.body.addWidget(label("Tidal Siege's Event Gamemode, on the game's Auto Play, fishing the "
+                                             "whole time.", "muted", wrap=True))
+        self.shark_card.body.addWidget(label(
+            "The macro joins (Events › Tidal Siege › Event Gamemode), walks to the fishing spot with the Summer "
+            "portal's fishing walk, and fishes. Every 3 minutes it drags everything in the bar onto the bin - "
+            "except the Sharktooth Conch. With the tooth, it waits for the storm and uses it then. After a "
+            "Sharkfang, or 18 minutes without a tooth, it restarts the match.",
+            "hint", wrap=True))
+        self.rod = ToggleRow("Equip the rod for me",
+                             "Off: equip your Auto Rod yourself before pressing Start - the bot only casts. On: the "
+                             "bot clicks the rod button once - only if it ISN'T already equipped, since clicking it "
+                             "while equipped switches it off.")
+        self.rod.toggled.connect(self.emit_changed)
+        self.shark_card.body.addWidget(self.rod)
+        self.shark_card.body.addWidget(label("Casts here. Same map as the Summer portal, so the same spot.",
+                                             "hint", wrap=True))
+        coords = QWidget()
+        row = QHBoxLayout(coords)
+        row.setContentsMargins(0, 0, 0, 0)
+        self.fish_x, self.fish_y = QSpinBox(), QSpinBox()
+        for axis, spin, value in (("X", self.fish_x, config.PORTAL_AUTOPLAY_FISH_X_DEFAULT),
+                                  ("Y", self.fish_y, config.PORTAL_AUTOPLAY_FISH_Y_DEFAULT)):
+            row.addWidget(field(axis))
+            spin.setRange(0, 4000)
+            spin.setValue(value)
+            spin.setFixedWidth(80)
+            spin.valueChanged.connect(self.emit_changed)
+            row.addWidget(spin)
+        row.addStretch(1)
+        locate = IconButton("target", "Locate")
+        locate.setToolTip("Click the fishing spot in Roblox to fill these in.")
+        locate.setFocusPolicy(Qt.NoFocus)
+        locate.clicked.connect(self._locate_fish_spot)
+        row.addWidget(locate)
+        self.shark_card.body.addWidget(coords)
+        self.shark_card.set_done(True)
         self.finish()
+        self._on_mode()
+
+    def _on_mode(self, *_):
+        shark = self.mode.value() == "sharkfang"
+        self.gem_card.setVisible(not shark)
+        self.shark_card.setVisible(shark)
+        self.emit_changed()
+
+    def _locate_fish_spot(self):
+        def picked(xy):
+            if xy:
+                self.fish_x.setValue(xy[0])
+                self.fish_y.setValue(xy[1])
+
+        self.host._pick_screen_click(picked, "Click the fishing spot in Roblox. Esc cancels.")
 
     def checks(self):
-        return [("Units", "ok", "the game's Auto Play")]
+        if self.mode.value() != "sharkfang":
+            return [("Units", "ok", "the game's Auto Play")]
+        walk_recorded = any(os.path.exists(preset_core.preset_path(config.PORTAL_PRESET_LOCATION,
+                                                                    config.SHARKFANG_WALK_CATEGORY, name))
+                            for name in (config.PORTAL_AUTOPLAY_WALK_PRESET, config.PORTAL_AUTOPLAY_WALK_PRESET_LEGACY))
+        return [("Units", "ok", "the game's Auto Play"),
+                ("Fishing walk", "ok" if walk_recorded else "warn",
+                 "Summer portal's walk" if walk_recorded else "record it on Portals › Summer")]
 
     def run_spec(self):
+        if self.mode.value() == "sharkfang":
+            pos = (self.fish_x.value(), self.fish_y.value())
+            return "run_sharkfang", (pos, self.rod.isChecked()), [("Gamemode", "Sharkfang"),
+                                                                  ("Stage", "Tidal Siege - Event Gamemode")]
         return "run_gem_farm", (), [("Gamemode", "Gem Farm"), ("Stage", "King's Tomb - Master")]
 
     def summary(self):
+        if self.mode.value() == "sharkfang":
+            return "Sharkfang - Tidal Siege, fishing"
         return "Gem Farm - King's Tomb Master, Auto Play"
+
+    def state(self):
+        return {"mode": self.mode.value(), "rod": self.rod.isChecked(),
+                "fish": [self.fish_x.value(), self.fish_y.value()]}
+
+    def restore(self, data):
+        # Saved before Sharkfang existed, the page was Gem Farm only.
+        if data.get("mode") in dict(self._MODES):
+            self.mode.set_value(data["mode"], animate=False)
+        self.rod.setChecked(bool(data.get("rod", False)))
+        fish = data.get("fish")
+        if isinstance(fish, list) and len(fish) == 2:
+            self.fish_x.setValue(int(fish[0]))
+            self.fish_y.setValue(int(fish[1]))
+        self._on_mode()
 
 
 # ----------------------------------------------------------------------------- queue

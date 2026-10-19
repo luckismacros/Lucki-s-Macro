@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "3.4.1"
+APP_VERSION = "3.5"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -810,7 +810,7 @@ GAMEMODES = {
     "portals":     {"label": "Portals",     "enabled": True},
     "bossrush":    {"label": "Boss Rush",   "enabled": True},
     "monsterclash": {"label": "Monster Clash", "enabled": True},
-    "others":      {"label": "Gem Farm",    "enabled": True},     # the Others page (modules/gem_farm.py)
+    "others":      {"label": "Others",      "enabled": True},     # Gem Farm / Sharkfang (modules/gem_farm.py, sharkfang.py)
 }
 
 # How often to click Reconnect on the disconnect popup while waiting to get back in.
@@ -1451,3 +1451,74 @@ MONSTER_CLASH_RIFT_WAIT = 12.0
 MONSTER_CLASH_CUTSCENE_WAIT = 180.0
 # A Start Game seen this soon after starting a match is that match's own button fading out.
 MONSTER_CLASH_MIN_MATCH = 20.0
+
+# --- Sharkfang Farm (Others page, limited Tidal Siege event - remove when it ends) ------
+# Captured at 1920x1080 and rescaled 1600/1919 like Monster Clash's (originals kept
+# locally in sharkfang/_original_1920x1080/). See modules/sharkfang.py.
+SHARKFANG_DIR = "assets/templates/sharkfang"
+SHARKFANG_EVENTS_BTN = f"{SHARKFANG_DIR}/events.png"                 # the lobby's Events button
+SHARKFANG_TIDAL_SIEGE_CARD = f"{SHARKFANG_DIR}/tidal_siege.png"      # "Summer Event / Tidal Siege" card
+SHARKFANG_EVENT_GAMEMODE_BTN = f"{SHARKFANG_DIR}/event_gamemode.png"
+SHARKFANG_SELECT_STAGE_BTN = f"{SHARKFANG_DIR}/select_stage.png"
+SHARKFANG_START_BTN = f"{SHARKFANG_DIR}/start.png"                   # the party screen's Start
+SHARKFANG_SETTINGS_BTN = f"{SHARKFANG_DIR}/settings.png"             # in-match gear
+SHARKFANG_RESTART_BTN = f"{SHARKFANG_DIR}/restart.png"
+SHARKFANG_RESTART_CONFIRM_BTN = f"{SHARKFANG_DIR}/restart_confirm.png"
+SHARKFANG_EMPTY_BAR = f"{SHARKFANG_DIR}/empty_bar.png"               # the 6 catch slots, all empty
+# Each empty slot on its own (inset from its frame). On the rescaled bar a slot's own crop
+# scores 0.92-0.97 at its own spot and at most 0.88 at a neighbour's.
+SHARKFANG_SLOTS = [f"{SHARKFANG_DIR}/slot_{n}.png" for n in range(1, 7)]
+SHARKFANG_BIN_BTN = f"{SHARKFANG_DIR}/bin.png"
+SHARKFANG_TOOTH = f"{SHARKFANG_DIR}/tooth.png"                       # Sharktooth Conch in a slot
+# The storm dial at the moment to use the tooth: the inside of the dial only (no map behind
+# it), purple quarter at the top right. Also checked by colour - see SHARKFANG_STORM_PATCHES.
+SHARKFANG_STORM = f"{SHARKFANG_DIR}/storm.png"
+SHARKFANG_OBTAINED = f"{SHARKFANG_DIR}/sharkfang_obtained.png"       # the Sharkfang card on Obtained Rewards
+# The popup's title. Other rewards can show it too, so it only counts right after the tooth.
+SHARKFANG_OBTAINED_TITLE = f"{SHARKFANG_DIR}/obtained_title.png"
+
+for _path in (SHARKFANG_EVENTS_BTN, SHARKFANG_TIDAL_SIEGE_CARD, SHARKFANG_EVENT_GAMEMODE_BTN,
+              SHARKFANG_SELECT_STAGE_BTN, SHARKFANG_RESTART_CONFIRM_BTN):
+    # Rescaled crops, as Monster Clash's menu buttons (real sightings there 0.79-0.99).
+    TEMPLATE_THRESHOLDS.setdefault(_path, 0.75)
+TEMPLATE_THRESHOLDS.update({
+    SHARKFANG_START_BTN: 0.85,               # the green buttons look alike - see MONSTER_CLASH_START_BTN
+    SHARKFANG_SETTINGS_BTN: 0.80,            # small icon
+    SHARKFANG_RESTART_BTN: 0.78,
+    SHARKFANG_BIN_BTN: 0.75,
+    SHARKFANG_TOOTH: 0.75,
+    SHARKFANG_STORM: 0.88,                   # has to be this exact dial - a turned wedge drops well below
+    SHARKFANG_OBTAINED: 0.75,
+    SHARKFANG_OBTAINED_TITLE: 0.75,
+    SHARKFANG_EMPTY_BAR: 0.80,
+})
+for _path in SHARKFANG_SLOTS:
+    TEMPLATE_THRESHOLDS[_path] = 0.80        # only ever checked at that slot's own spot
+# The dial's colours must match too, not only its shape (template matching ignores colour).
+EXACT_MATCH_TEMPLATES[SHARKFANG_STORM] = 35
+
+# The storm dial's quarters, as (x, y) inside storm.png and the colour each must be: the
+# top right purple, the other three gold. Measured on storm.png - purple there is BGR
+# (102, 27, 39), gold (64, 119, 140) / (30, 97, 134) / (41, 93, 117).
+SHARKFANG_STORM_SIZE = 67                    # storm.png is 67x67
+SHARKFANG_STORM_PATCHES = [((50, 12), "purple"), ((12, 12), "gold"), ((60, 58), "gold"), ((8, 58), "gold")]
+
+# Where the 6 slot centres sit from the empty bar's centre (reference px, measured on
+# empty_bar.png): first slot 241 left of it, then every 96.7.
+SHARKFANG_FIRST_SLOT_DX = -241.0
+SHARKFANG_SLOT_PITCH = 96.7
+SHARKFANG_SLOT_DY = 1.0
+SHARKFANG_SLOT_HALF = 45                     # half a slot's width/height
+
+# The bar isn't empty when a match starts: the first clear-out is this long after fishing
+# starts, then again every this long.
+SHARKFANG_BAR_CHECK_SECONDS = 180.0
+# If the bar couldn't be found at a check, look again this much sooner.
+SHARKFANG_BAR_RETRY_SECONDS = 30.0
+# No tooth this long into a match -> restart it (about wave 70). With a tooth, the match
+# goes on until the storm comes and the tooth is used, however long that takes.
+SHARKFANG_MATCH_LIMIT_SECONDS = 18 * 60.0
+# After pressing the tooth: how long to watch for the Sharkfang reward before giving up on it.
+SHARKFANG_OBTAIN_WAIT = 300.0
+# The Summer portal's map, so its Auto Play fishing walk is the one played.
+SHARKFANG_WALK_CATEGORY = "summer"

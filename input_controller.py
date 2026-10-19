@@ -991,6 +991,31 @@ def drift_hover(x, y, approach_offset=15, steps=5, step_delay=0.02, settle_delay
     mark_input()
     time.sleep(settle_delay)
 
+def drag_to(x1, y1, x2, y2, steps=15, hold=0.15):
+    """
+    Drags with the left button from one REFERENCE-space point to another: hovers the
+    start, presses, moves there in small steps (a drag-and-drop UI only follows real
+    movement while the button is down, not one jump), settles, releases. The button is
+    released whatever happens - left held down, every later click would be swallowed.
+    """
+    start_x, start_y = config.to_screen(x1, y1)
+    end_x, end_y = config.to_screen(x2, y2)
+    _move_abs(start_x, start_y)
+    _nudge()
+    time.sleep(0.15 * config.SLOWNESS)
+    pydirectinput.mouseDown()
+    try:
+        time.sleep(hold * config.SLOWNESS)
+        for i in range(1, steps + 1):
+            _move_abs(start_x + (end_x - start_x) * i / steps, start_y + (end_y - start_y) * i / steps)
+            time.sleep(0.02 * config.SLOWNESS)
+        _nudge()
+        time.sleep(hold * config.SLOWNESS)
+    finally:
+        pydirectinput.mouseUp()
+    mark_input()
+    time.sleep(0.3)
+
 def _scroll_carousel(direction, hover=None, notches=18):
     """
     Wheel-scrolls the map/raid carousel. direction is -1 (right/down) or +1 (left/up).
