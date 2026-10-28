@@ -328,17 +328,6 @@ def click_raid_difficulty(difficulty):
     click_at(x, y)
     return True
 
-def run_raid_flow(raid_key, difficulty="1"):
-    """Raid flow. Returns True/False/"RECONNECTED" (propagated from any step that detects a disconnect)."""
-    steps = [
-        click_play,
-        click_raid_card,
-        lambda: click_raid(raid_key),
-        lambda: click_raid_difficulty(difficulty),
-        click_select_stage,
-    ]
-    return _run_steps(steps)
-
 def _run_steps(steps):
     for step in steps:
         if config.STOP_REQUESTED:

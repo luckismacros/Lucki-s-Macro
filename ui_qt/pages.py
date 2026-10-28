@@ -648,8 +648,8 @@ class RaidsPage(ModePage):
         c1.body.addWidget(self.banner)
         self.raid_box = combo([(r["label"], k) for k, r in config.RAIDS.items() if r["enabled"]])
         c1.body.addWidget(self.raid_box)
-        c1.body.addWidget(field("Difficulty"))
-        self.difficulty = Segmented([("1", "1"), ("2", "2"), ("3", "3 - hardest")], "1")
+        c1.body.addWidget(field("Act"))
+        self.difficulty = Segmented([("1", "Act 1"), ("2", "Act 2"), ("3", "Act 3 - hardest")], "1")
         c1.body.addWidget(self.difficulty)
         c1.set_done(True)
         self.picker = self.add_card(PresetPicker(host, 2, "How units get placed", self.slot))
@@ -667,15 +667,16 @@ class RaidsPage(ModePage):
 
     def update_steps(self):
         self.banner.set_art("raids", self.raid_box.currentData(), self.raid_box.currentText(),
-                            f"Difficulty {self.difficulty.value()}")
+                            f"Act {self.difficulty.value()}")
 
     def run_spec(self):
         r, d = self.slot()
         name = self.require_units()
-        return "run_bot", ("raids", r, d, d, name, False), [("Gamemode", "Raids"), ("Preset", name)]
+        return "run_bot", ("raids", r, d, d, name, False), [("Gamemode", "Raids"), ("Map", config.RAIDS[r]["label"]),
+                                                            ("Act", d), ("Preset", name)]
 
     def summary(self):
-        return f"{self.raid_box.currentText()}, difficulty {self.difficulty.value()}, with {self.units_label()}"
+        return f"{self.raid_box.currentText()}, Act {self.difficulty.value()}, with {self.units_label()}"
 
     def state(self):
         d = super().state()

@@ -37,6 +37,8 @@ VANITY_ART = [
     ("story_maps", "kings_tomb",        "Kings_Tomb.png",     0.14),
     ("story_maps", "east_town",         "East_Town.png",      0.14),
     ("story_maps", "crimson_shore",     "Crimson_Shore.png",  0.14),
+    ("story_maps", "flaming_monastery", "Flaming_Monastery.png", 0.14),
+    ("story_maps", "hollow_desert",     "Hollow_Desert.png",  0.14),
     ("expeditions", "school_grounds",   "School_Grounds.png", 0.15),
     ("expeditions", "flower_forest",    "Flower_Forest.png",  0.15),
     ("expeditions", "rose_kingdom",     "Rose_Kingdom.png",   0.15),

@@ -265,7 +265,7 @@ def play_preset(location_key, variant_key, preset_name, skip_movement=False, mov
             for walk_key in held_movement:
                 pydirectinput.keyUp(walk_key)
 
-def wait_for_start_game(resumed=False):
+def wait_for_start_game(resumed=False, nudge=None):
     """
     Polls until the green Start Game button appears (map load) - or until it becomes
     clear the match already started without it, because the account has the game's
@@ -299,6 +299,10 @@ def wait_for_start_game(resumed=False):
     frame where Start Game merely hasn't drawn *yet* must not be mistaken for Auto
     Start, or a normal run would skip a Start Game click it still needed to make.
 
+    nudge, if given, is called with every tick's screenshot before the Auto Start check -
+    for a caller that knows how to push a stalled entry along (Raids re-press the party
+    screen's Start if it's still up).
+
     Returns:
       True              - Start Game button detected; caller clicks it as normal.
       "ALREADY_STARTED" - Auto Start skipped the button; the match is already
@@ -319,6 +323,8 @@ def wait_for_start_game(resumed=False):
 
     def _check_already_started(screenshot):
         nonlocal already_started_streak, seen_without_panel
+        if nudge is not None:
+            nudge(screenshot)
         on_stage = (
             find_template(screenshot, config.AUTOPLAY_ON_BTN, config.MATCH_THRESHOLD, debug_label="autoplay_on") or
             find_template(screenshot, config.AUTOPLAY_OFF_BTN, config.MATCH_THRESHOLD, debug_label="autoplay_off")

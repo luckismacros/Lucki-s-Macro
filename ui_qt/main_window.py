@@ -1433,7 +1433,7 @@ class MainWindow(QMainWindow):
         elif loc in config.MAPS:
             context = f"{config.MAPS[loc]['label']} - {config.MAPS[loc]['acts'].get(var, {}).get('label', var)}"
         elif loc in config.RAIDS:
-            context = f"{config.RAIDS[loc]['label']} - difficulty {var}"
+            context = f"{config.RAIDS[loc]['label']} - Act {var}"
         else:
             context = ""
         dlg = UnitPlacementEditor(self, loc, var, name, context, pix)

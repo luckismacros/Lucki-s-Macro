@@ -28,7 +28,7 @@ MODES = [
      "No recording needed", theme.SUCCESS_TEXT, ("portals", "sovereign")),
     ("story", "Story", "Repeats one stage, or climbs to the next act every time you win.",
      "No recording needed", theme.SUCCESS_TEXT, ("story_maps", "rose_kingdom")),
-    ("raids", "Raids", "Farms one raid at the difficulty you pick.",
+    ("raids", "Raids", "Farms one raid at the act you pick.",
      "No recording needed", theme.SUCCESS_TEXT, ("raids", "spirit_city")),
     ("challenges", "Challenges", "Checks Regular, Daily and Weekly challenges and plays each one as it unlocks.",
      "Reuses your Story setups", "#fdba74", ("story_maps", "kings_tomb")),
@@ -552,7 +552,7 @@ class WelcomeDialog(FloatingDialog):
                        "if you want to know how recordings work for other modes.",
             "story": "For Story you can start with the game's Auto Play right away, or make a recording for a stronger "
                      "placement.",
-            "raids": "For Raids you can start with the game's Auto Play right away, or make a recording per difficulty.",
+            "raids": "For Raids you can start with the game's Auto Play right away, or make a recording per act.",
             "challenges": "Challenges use Auto Play unless you link your Story recordings to them under “Units for each "
                           "challenge”.",
             "expeditions": "Expeditions have no Auto Play, so they use a recording. One comes ready to use - check it "

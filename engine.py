@@ -37,8 +37,8 @@ import threading
 import config
 from vision import capture_screen, find_template
 from input_controller import anchor_camera, click_at
-from modules.gamemode_select import run_flow, run_raid_flow, run_challenge_slot_flow
-from modules.match_start import click_start_party, click_raid_start, click_challenge_start, click_portal_start
+from modules.gamemode_select import run_flow, run_challenge_slot_flow
+from modules.match_start import click_start_party, click_challenge_start, click_portal_start
 from modules.stage_player import (
     play_preset, wait_for_start_game, click_start_game, wait_for_repeat_stage,
     wait_for_next_stage, wait_for_match_result, wait_for_reward_or_select,
@@ -241,6 +241,9 @@ class BotEngine:
         return False
 
     def run_bot(self, gamemode_key, location_key, variant_key, difficulty, preset_name, auto_next=False):
+        if gamemode_key == "raids":
+            # Raids have their own screen-reading runner since 3.6 - see run_raid().
+            return self.run_raid(location_key, variant_key, preset_name)
         # Whether a leading walk in the preset (see stage_player.play_preset's
         # skip_movement) still needs to play. True until proven otherwise: the
         # character's actual position is unknown at the very start of a run. Set to
@@ -291,12 +294,8 @@ class BotEngine:
             while True:
                 self.set_phase("NAVIGATING MENUS", "#4fc3f7")
 
-                if gamemode_key == "raids":
-                    self.log(f"Navigating to Raid: {location_key} (Difficulty {difficulty})...")
-                    result = run_raid_flow(location_key, difficulty)
-                else:
-                    self.log(f"Navigating menus from the lobby (Difficulty: {difficulty})...")
-                    result = run_flow(location_key, variant_key, difficulty)
+                self.log(f"Navigating menus from the lobby (Difficulty: {difficulty})...")
+                result = run_flow(location_key, variant_key, difficulty)
 
                 if result == "RECONNECTED":
                     self.log("Disconnected again mid-navigation - reconnected, retrying...")
@@ -304,10 +303,10 @@ class BotEngine:
 
                 if not result:
                     self.log("Failed lobby navigation.")
-                    # A found-this-huge-bug-during-audit fix: run_flow()/run_raid_flow()
-                    # chain several steps together, and NOT all of them go through
-                    # poll_until() (click_map/click_act/click_difficulty/click_raid/
-                    # click_raid_difficulty are single vision checks with no poll wait
+                    # A found-this-huge-bug-during-audit fix: run_flow()
+                    # chains several steps together, and NOT all of them go through
+                    # poll_until() (click_map/click_act/click_difficulty are single
+                    # vision checks with no poll wait
                     # at all - see modules/gamemode_select.py). Those can return False
                     # purely because one frame's template match missed, with
                     # STOP_REQUESTED never touched - so EVERY break/return in run_bot()
@@ -324,7 +323,7 @@ class BotEngine:
                     return False
 
                 self.log("Starting match...")
-                start_result = click_raid_start() if gamemode_key == "raids" else click_start_party()
+                start_result = click_start_party()
                 if start_result == "RECONNECTED":
                     self.log("Disconnected while clicking Start - reconnected. Redoing navigation...")
                     continue
@@ -365,7 +364,7 @@ class BotEngine:
                     return
 
                 self.log("Starting match...")
-                start_result = click_raid_start() if gamemode_key == "raids" else click_start_party()
+                start_result = click_start_party()
                 if start_result == "RECONNECTED":
                     self.log("Disconnected while clicking Start - reconnected. Redoing navigation...")
                     if not _navigate_from_lobby():
@@ -405,18 +404,22 @@ class BotEngine:
                 resumed_stage[0] = True
                 already_started = result == "ALREADY_STARTED"
                 SESSION.match_started()
-                self.log("Match Loaded! Anchoring camera...")
-                self.set_phase("ANCHORING CAMERA", "#4fc3f7")
-                anchor_camera()
-
                 is_auto_play = _resolve_stage_mode()
+                if is_auto_play:
+                    # The game places the units itself - the camera doesn't matter.
+                    self.log("Match Loaded!")
+                else:
+                    self.log("Match Loaded! Anchoring camera...")
+                    self.set_phase("ANCHORING CAMERA", "#4fc3f7")
+                    anchor_camera()
+
                 if auto_next:
                     mode = "Auto Play" if is_auto_play else f"preset '{preset_name}'"
                     self.log(f"Auto Next: {location_key} / {variant_key} -> using {mode}.")
                 if is_auto_play:
-                    # A brief settle before the very first read: anchor_camera() can
-                    # still be finishing its own drag/release the instant this runs,
-                    # and a frame mid-motion is what a live 2026-09-14 miss looked like.
+                    # A brief settle before the very first read: the stage's side panel
+                    # can still be sliding in, and a frame mid-motion is what a live
+                    # 2026-09-14 miss looked like.
                     time.sleep(0.4)
                     self.log("Auto Play preset selected - checking in-game Auto Play toggle...")
                     self.set_phase("CHECKING AUTO PLAY", "#2e7d32")
@@ -1681,7 +1684,10 @@ class BotEngine:
                     step = "after"
 
                 if step == "after":
-                    result = runner.farm_next() if mode == "farm" else runner.rift_next()
+                    if hasattr(runner, "after_match"):
+                        result = runner.after_match()
+                    else:
+                        result = runner.farm_next() if mode == "farm" else runner.rift_next()
                     if result == "RECONNECTED":
                         self.log("Disconnected after the match - reconnected. Rejoining...")
                         need_nav = True
@@ -1693,8 +1699,14 @@ class BotEngine:
                         _mark_failure(f"{_label.upper()} NEXT STAGE FAILED")
                         return
                     # Farm: the next match is already running (Auto Retry) or was just
-                    # started. Rift: a stage with Start Game to press is next.
-                    step = "match" if mode == "farm" else "start"
+                    # started. Rift: a stage with Start Game to press is next. A runner
+                    # with its own after_match() (Raids) says which.
+                    if result == "IN_MATCH":
+                        step = "match"
+                    elif result == "START":
+                        step = "start"
+                    else:
+                        step = "match" if mode == "farm" else "start"
         except Exception as e:
             self._report_crash(e)
         finally:
@@ -1804,6 +1816,23 @@ class BotEngine:
         from modules.gem_farm import GemFarmRunner
         return self.run_monster_clash("farm", None, _runner_factory=lambda sp: GemFarmRunner(set_phase=sp),
                                       _label="Gem Farm")
+
+    def run_raid(self, raid_key, act, preset_name):
+        """
+        Raids (rebuilt in 3.6): the shared runner loop above with modules/raid.RaidRunner,
+        which reads the screen to find its way onto the stage from anywhere, checks every
+        menu click, and repeats with one click on Repeat Stage (or lets the game's Auto
+        Retry do it).
+        """
+        from modules.raid import RaidRunner
+        label = config.RAIDS.get(raid_key, {}).get("label", raid_key)
+        how = ("the game's Auto Play (no camera fix needed)" if preset_name == config.AUTO_PLAY_PRESET_NAME
+               else f"recording '{preset_name}'")
+        return self.run_monster_clash(
+            "raid", None, _label="Raid",
+            _runner_factory=lambda sp: RaidRunner(raid_key, act, preset_name, set_phase=sp),
+            _intro=f"Raid - {label}, Act {act}, with {how}. Works with the game's Auto Start / Auto Retry "
+                   f"on or off.")
 
     def run_sharkfang(self, fish_pos, equip_rod=False):
         """

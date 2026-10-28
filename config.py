@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "3.5.2"
+APP_VERSION = "3.6"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -1124,6 +1124,7 @@ MAPS = {
     "east_town":         {"label": "East Town",         "enabled": True, "template": "assets/templates/story/map_east_town.png", "acts": _default_acts()},
     "crimson_shore":     {"label": "Crimson Shore",     "enabled": True, "template": "assets/templates/story/map_crimson_shore.png", "acts": _default_acts()},
     "flaming_monastery": {"label": "Flaming Monastery", "enabled": True, "template": "assets/templates/story/map_flaming_monastery.png", "acts": _default_acts()},
+    "hollow_desert":     {"label": "Hollow Desert",     "enabled": True, "template": "assets/templates/story/map_hollow_desert.png", "acts": _default_acts()},
 }
 
 # The linear campaign order Auto Next climbs through: Act 1-5 of one map, then Act 1
