@@ -210,6 +210,7 @@ class MainWindow(QMainWindow):
         self._phase_code = "IDLE"
         self._last_run_outcome = None
         self._update_info = None
+        self._updating = False
         self._time_limit_hit = False
 
         self._build()
@@ -454,6 +455,43 @@ class MainWindow(QMainWindow):
         # Did the last run end without stopping properly (crash, killed, PC slept)? Says so
         # in the log and on Discord - see modules/crash_report.py.
         QTimer.singleShot(1500, self._check_previous_session)
+        QTimer.singleShot(1200, self._after_self_update)
+        # Long runs never restart the app, so the launch check alone would never see a
+        # release sent while the laptop farms for days. Toast only - never interrupts a run.
+        self._update_timer = QTimer(self)
+        self._update_timer.timeout.connect(lambda: self.check_for_updates(silent=True))
+        self._update_timer.start(3 * 60 * 60 * 1000)
+
+    def _after_self_update(self):
+        """Just restarted by the updater: say so, and carry on with the run it interrupted."""
+        from modules import self_update
+        try:
+            result = self_update.finish_on_startup()
+        except Exception as e:
+            print(f"[update] Couldn't read the last update's result: {e}")
+            return
+        if not result:
+            return
+        if not result.get("ok"):
+            self.log(f"The update to v{result.get('to')} didn't work ({result.get('error')}) - still on "
+                     f"v{config.APP_VERSION}. Details: logs/update.log")
+            self.toast("Update didn't work", f"Still on v{config.APP_VERSION} - nothing was lost. "
+                       "See logs/update.log.", "warning", 10000)
+            notify.send(f"The update to v{result.get('to')} didn't work: {result.get('error')}. "
+                        f"Still on v{config.APP_VERSION}, nothing lost.", category="problems",
+                        title="Update failed", good=False)
+            return
+        self.log(f"Updated: v{result.get('from')} -> v{config.APP_VERSION}.")
+        self.toast("Updated", f"Now on v{config.APP_VERSION}.", "success", 8000)
+        resume = result.get("resume")
+        notify.send(f"Updated from v{result.get('from')} to **v{config.APP_VERSION}**."
+                    + (" Carrying on with the run." if resume else ""),
+                    category="lifecycle", title="Updated", good=True)
+        if resume and resume in self.pages:
+            self.log(f"Carrying on with the run the update interrupted ({resume}) in 10s...")
+            # Docking and Roblox need a moment after a fresh start, same as a normal launch.
+            QTimer.singleShot(10000, lambda: threading.Thread(
+                target=lambda: self.bot_mode(resume), daemon=True).start())
 
     def _check_previous_session(self):
         from modules import crash_report
@@ -480,13 +518,85 @@ class MainWindow(QMainWindow):
         threading.Thread(target=run, daemon=True).start()
 
     def _on_update_checked(self, info, silent):
+        from modules import self_update
+        already_known = bool(self._update_info) and info and self._update_info.get("version") == info.get("version")
         self._update_info = info
         if info:
+            if already_known and silent:
+                return
             self.log(f"Update available: v{info['version']} (this is v{config.APP_VERSION}).")
-            self.toast("Update available", f"v{info['version']} is out - this is v{config.APP_VERSION}. "
-                      "See Settings > Advanced to open the release page.", "info", 10000)
+            can_install = self_update.supported() and info.get("download_url")
+            if can_install and not self.engine.running and not self._updating:
+                if dialogs.confirm(self, f"Update to v{info['version']}?",
+                                   f"You're on v{config.APP_VERSION}. The macro downloads the update, closes, "
+                                   "installs it and opens again by itself - about a minute. Your settings, "
+                                   "recordings and presets stay as they are.",
+                                   ok_text="Update now", cancel_text="Later"):
+                    self.install_update(info)
+                return
+            how = ("Settings > Advanced > Install update, or /update on Discord" if can_install
+                   else "Settings > Advanced to open the release page")
+            self.toast("Update available", f"v{info['version']} is out - this is v{config.APP_VERSION}. {how}.",
+                       "info", 10000)
         elif not silent:
             self.toast("Up to date", f"You're on v{config.APP_VERSION}, the latest.", "success")
+
+    def install_update(self, info, resume=None):
+        """
+        Downloads the update in the background, then hands over to the installer and
+        closes (modules/self_update.py). Called from the UI thread.
+        """
+        if self._updating:
+            return
+        self._updating = True
+        self.log(f"Downloading v{info['version']} ({(info.get('size') or 0) / 1e6:.0f} MB)...")
+        self.toast("Downloading update", f"v{info['version']} - the macro restarts by itself when it's ready.",
+                   "info", 8000)
+
+        def run():
+            ok, msg = self.stage_update(info)
+            if ok:
+                self.bridge.call.emit(lambda: self.restart_into_update(resume))
+            else:
+                self.bridge.call.emit(lambda: (self.log(f"Update failed: {msg}"),
+                                               self.toast("Update failed", msg, "warning", 10000)))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def stage_update(self, info):
+        """Downloads + extracts (any thread). (ok, message). Sets self._staged_update."""
+        from modules import self_update
+        shown = [0]
+
+        def progress(fraction):
+            step = int(fraction * 4)          # a log line every 25%
+            if step > shown[0]:
+                shown[0] = step
+                self.bridge.call.emit(lambda: self.log(f"Update download: {step * 25}%"))
+
+        try:
+            self._staged_update = (self_update.download_and_stage(info, progress), info["version"])
+        except Exception as e:
+            self._updating = False
+            return False, str(e)
+        return True, f"v{info['version']} downloaded."
+
+    def restart_into_update(self, resume=None):
+        """UI thread: start the installer and close. resume = page key to carry on with."""
+        from modules import self_update
+        staged, version = self._staged_update
+        if resume is None and self.engine.running:
+            # Closing stops the run (closeEvent); the updated app starts it again.
+            resume = getattr(getattr(self, "_last_run_page", None), "key", None)
+        try:
+            self_update.launch_installer(staged, config.APP_VERSION, resume=resume)
+        except Exception as e:
+            self._updating = False
+            self.log(f"Couldn't start the installer: {e}")
+            self.toast("Update failed", f"Couldn't start the installer: {e}", "warning", 10000)
+            return
+        self.log(f"Installing v{version} - closing, back in a moment.")
+        QTimer.singleShot(500, self.close)
 
     def _screen_by_name(self, name):
         for s in QGuiApplication.screens():
@@ -864,6 +974,46 @@ class MainWindow(QMainWindow):
         while self.engine.running and time.time() < deadline:
             time.sleep(0.5)
         return not self.engine.running
+
+    def bot_update(self):
+        return self._bot_action("update", self._bot_update)
+
+    def _bot_update(self):
+        """
+        Discord /update: download the newest version while the run carries on, then stop
+        the run, install and restart - and start the same run again afterwards. The
+        restart itself is bot_update_restart(), called once the reply is sent.
+        """
+        from modules import self_update, update_check
+        if not self_update.supported():
+            return False, "Updating itself only works in the built app, not when running from source."
+        if self._updating:
+            return False, "An update is already being installed."
+        info = update_check.check_for_update()
+        if not info:
+            return False, f"Already on the newest version (v{config.APP_VERSION})."
+        if not info.get("download_url"):
+            return False, f"v{info['version']} is out, but its release has no app zip to install."
+        self._updating = True
+        self.log(f"Discord: update to v{info['version']} requested - downloading...")
+        ok, msg = self.stage_update(info)
+        if not ok:
+            return False, f"Couldn't download v{info['version']}: {msg}"
+        resume = None
+        if self.engine.running:
+            page = getattr(self, "_last_run_page", None)
+            resume = getattr(page, "key", None)
+            self.log("Discord: stopping the run for the update.")
+            self.run_on_ui(self.stop_bot)
+            if not self._wait_until_stopped():
+                self._updating = False
+                return False, "Downloaded, but the run is still finishing a step - try /update again in a moment."
+        self._pending_update_resume = resume
+        return True, (f"v{info['version']} downloaded - installing now (this is v{config.APP_VERSION}). "
+                      f"Back in about a minute" + (", carrying on with the same run." if resume else "."))
+
+    def bot_update_restart(self):
+        self.run_on_ui(lambda: self.restart_into_update(getattr(self, "_pending_update_resume", None)))
 
     def bot_status(self):
         running = bool(self.engine.running)

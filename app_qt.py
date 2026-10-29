@@ -34,6 +34,12 @@ import os
 import sys
 import time
 
+# Started by an older version's updater to install THIS version over it (see
+# modules/self_update.py) - does only that, no window, no log of its own in here.
+if "--apply-update" in sys.argv:
+    from modules import self_update
+    sys.exit(self_update.apply_from_argv(sys.argv))
+
 _is_bundled = getattr(sys, "frozen", False) or "__compiled__" in globals()
 _base_dir = os.path.dirname(sys.executable) if _is_bundled else os.path.dirname(os.path.abspath(__file__))
 os.chdir(_base_dir)

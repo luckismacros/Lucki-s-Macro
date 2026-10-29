@@ -112,12 +112,13 @@ def _wait_for(templates, seconds):
     return None
 
 
-def _step(name, action, proof):
+def _step(name, action, proof, tag="Raid"):
     """
     One menu step: action() clicks, and one of `proof` showing up proves it worked. If a
     proof is already on screen the step was done already and nothing is clicked. Retried
     STEP_ATTEMPTS times - one slow frame or a popup over the button used to end the whole
-    raid navigation. True / False / "RECONNECTED".
+    raid navigation. tag names the mode in the log (Gem Farm uses this too).
+    True / False / "RECONNECTED".
     """
     for attempt in range(1, STEP_ATTEMPTS + 1):
         if config.STOP_REQUESTED:
@@ -127,7 +128,7 @@ def _step(name, action, proof):
             return seen
         if seen:
             if attempt == 1:
-                print(f"[Raid] {name}: the next screen is already up - nothing to click.")
+                print(f"[{tag}] {name}: the next screen is already up - nothing to click.")
             return True
         result = action()
         if result == "RECONNECTED":
@@ -139,10 +140,10 @@ def _step(name, action, proof):
             return seen
         if seen:
             return True
-        print(f"[Raid] {name}: the next screen didn't show (attempt {attempt}/{STEP_ATTEMPTS}).")
+        print(f"[{tag}] {name}: the next screen didn't show (attempt {attempt}/{STEP_ATTEMPTS}).")
         dismiss_click_anywhere_if_present(capture_screen())
-    path = health.save_debug_screenshot(f"raid_{name}_failed")
-    print(f"[Raid] {name} didn't work after {STEP_ATTEMPTS} tries (screen saved: {path}).")
+    path = health.save_debug_screenshot(f"{tag.lower()}_{name}_failed")
+    print(f"[{tag}] {name} didn't work after {STEP_ATTEMPTS} tries (screen saved: {path}).")
     return False
 
 

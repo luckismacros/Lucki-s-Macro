@@ -23,6 +23,8 @@ Commands (slash commands, registered in every server the bot is in):
                settings its page has in the app; stops the current run first
   /reset       stop, leave the game (disconnect popup's Leave, or Esc-L-Enter), rejoin
                through Roblox's home screen, and start the run again
+  /update      download the newest release, install it, restart - and carry on with the
+               run that was going (modules/self_update.py)
 
 Only the Discord account whose user ID is in Settings can use them - everyone else gets
 a refusal. There is deliberately no command that runs arbitrary code or changes files.
@@ -313,6 +315,18 @@ class DiscordBot:
                                          monster_clash.value if monster_clash else None)
             await interaction.followup.send(embed=embed(f"Started {mode.name}" if ok else f"Couldn't start {mode.name}",
                                                         msg, GOOD if ok else BAD))
+
+        @tree.command(name="update", description="Install the newest version and carry on with the run")
+        async def update(interaction: discord.Interaction):
+            if not await allowed(interaction):
+                return
+            await interaction.response.defer()
+            ok, msg = await run_blocking(bot.controller.bot_update)
+            await interaction.followup.send(embed=embed("Updating" if ok else "Update", msg,
+                                                        GOOD if ok else NEUTRAL))
+            if ok:
+                # Only after the reply is out - the restart takes the bot offline.
+                await run_blocking(bot.controller.bot_update_restart)
 
         @tree.command(name="reset", description="Leave the game and rejoin through Roblox's home screen")
         @app_commands.describe(restart_run="Start the run again afterwards if one was going (default: yes)")

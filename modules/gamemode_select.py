@@ -85,8 +85,25 @@ def click_play_small():
 def click_story_card():
     return _wait_and_click(config.STORY_CARD, "click_story_card", recover_leftover_party=True)
 
-def _find_map(template, debug_label):
-    return find_template(capture_screen(), template, config.MATCH_THRESHOLD, debug_label=debug_label)
+# The map list, the act panel and the difficulty buttons slide in after the click that
+# opens them. One look the instant after that click lost the race on slower PCs - the
+# tile simply wasn't drawn yet - and failed the whole trip through the menus (Gem Farm's
+# King's Tomb / Master especially). Each now gets this long to show up.
+APPEAR_WAIT_SECONDS = 4.0
+
+
+def _find_within(template, debug_label, seconds=APPEAR_WAIT_SECONDS):
+    """find_template, looking again for up to `seconds` until it shows. Match or None."""
+    deadline = time.time() + seconds
+    while not config.STOP_REQUESTED:
+        last = time.time() >= deadline
+        # The best-confidence report only on the last look, not on every miss.
+        match = find_template(capture_screen(), template, config.MATCH_THRESHOLD,
+                              debug_label=debug_label if last else None)
+        if match or last:
+            return match
+        time.sleep(0.3)
+    return None
 
 # One sweep step, in wheel notches. Smaller than a full page on purpose: the point is
 # to never step over an entry, and the sweep stops itself the moment the list stops
@@ -186,7 +203,7 @@ def click_map(map_key):
 
     template = map_data["template"]
     debug_label = f"map_{map_key}"
-    match = _find_map(template, debug_label)
+    match = _find_within(template, debug_label, seconds=2.5)
 
     if not match:
         match = _sweep_carousel(template, debug_label, config.MAPS, map_key)
@@ -222,7 +239,7 @@ def click_act(map_key, act_key):
         return False
 
     debug_label = f"act_{act_key}"
-    match = find_template(capture_screen(), template, config.MATCH_THRESHOLD, debug_label=debug_label)
+    match = _find_within(template, debug_label)
     if not match:
         print(f"[click_act] Could not find '{act_key}' tile on screen.")
         health.report_missing_template(capture_screen(), debug_label, template)
@@ -241,7 +258,7 @@ def click_difficulty(difficulty):
 
     template = config.HARD_DIFFICULTY_TEMPLATE if difficulty == "hard" else config.NORMAL_DIFFICULTY_TEMPLATE
     debug_label = f"difficulty_{difficulty}"
-    match = find_template(capture_screen(), template, config.MATCH_THRESHOLD, debug_label=debug_label)
+    match = _find_within(template, debug_label)
     if not match:
         print(f"[click_difficulty] Could not find '{difficulty}' button on screen.")
         health.report_missing_template(capture_screen(), debug_label, template)

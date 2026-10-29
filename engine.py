@@ -1298,15 +1298,30 @@ class BotEngine:
 
                 if not nav_result:
                     self.log(f"Failed to enter {slot_label}.")
+                    # The category / slot clicks are still fixed points with nothing to
+                    # confirm them, so one slow panel used to end the whole run here.
+                    # Back to the lobby and in again from scratch, NAV_ATTEMPTS times.
+                    if self._retry_navigation():
+                        from modules.lobby import return_to_lobby
+                        if return_to_lobby(timeout=60.0, log=self.log, next_mode="challenges"):
+                            nav_context, previous_category = "cold", None
+                            continue
                     # A navigation miss, not a user stop - must not report as "Run finished".
                     if not config.STOP_REQUESTED:
                         config.STUCK_DETECTED = "CHALLENGE NAVIGATION FAILED"
                     break
+                self._nav_failures = 0
 
                 # nav_context still describes how this slot was reached, and the Start
                 # button moves depending on that - see click_challenge_start().
                 self.log("Clicking Start...")
-                click_challenge_start(after_match=(nav_context == "after_match"))
+                start_result = click_challenge_start(after_match=(nav_context == "after_match"))
+                if start_result == "RECONNECTED":
+                    self.log("Disconnected while clicking Start - reconnected. Retrying this challenge...")
+                    nav_context, previous_category = "cold", None
+                    continue
+                if start_result is False and config.STOP_REQUESTED:
+                    break
 
                 self.set_phase("WAITING FOR START GAME", "#4fc3f7")
                 game_result = wait_for_start_game()

@@ -2,11 +2,14 @@
 """
 Checks GitHub Releases for a newer build than this one (config.APP_VERSION).
 
-Tier 1 only, by design: this never downloads or applies anything, it just tells the
-player a newer version exists and links to the release page for them to grab it
-themselves. Follows the same rules modules/notify.py does for the same reason - a
-network call must never be the thing that blocks startup or breaks a run: fails
-silent, never raises, never blocks the caller.
+This only finds out what's newer; modules/self_update.py downloads and installs it.
+Follows the same rules modules/notify.py does for the same reason - a network call must
+never be the thing that blocks startup or breaks a run: fails silent, never raises,
+never blocks the caller.
+
+The version is read from the release's tag AND from its zip's name
+(Luckis_Macro_v3.6.zip), whichever is higher: the release that shipped 3.6 was still
+tagged v.3.3 (one release edited over and over), so a tag-only check never saw it.
 
 GITHUB_REPO must point at a PUBLIC repo - a private one needs a token this app
 doesn't (and shouldn't) carry, the same reasoning settings.py keeps the Discord
@@ -58,13 +61,23 @@ def check_for_update():
         )
         with urllib.request.urlopen(request, timeout=_TIMEOUT) as resp:
             data = json.loads(resp.read().decode("utf-8"))
+        from modules.self_update import ASSET_RE
         latest = str(data.get("tag_name") or "").strip()
+        asset = None
+        for a in data.get("assets") or []:
+            m = ASSET_RE.match(a.get("name") or "")
+            if m and (asset is None or _parse_version(m.group(1)) > _parse_version(asset[0])):
+                asset = (m.group(1), a)
+        if asset and _parse_version(asset[0]) >= _parse_version(latest):
+            latest = asset[0]
         if not latest or _parse_version(latest) <= _parse_version(config.APP_VERSION):
             return None
         # Displayed to the player, so this is cleaned up with the same leading-junk
         # strip as the comparison itself - "v.1.13" should read "1.13", not ".1.13".
         display = re.sub(r"^[^\d]*", "", latest) or latest
         return {"version": display, "url": data.get("html_url") or "",
-                "notes": (data.get("body") or "").strip()}
+                "notes": (data.get("body") or "").strip(),
+                "download_url": asset[1].get("browser_download_url") if asset else None,
+                "size": asset[1].get("size") if asset else 0}
     except Exception:
         return None

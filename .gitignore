@@ -7,6 +7,9 @@ dist/
 dist_nuitka/
 dist_next/
 build_next/
+build_release/
+releases/
+_update/
 *.zip
 
 # Per-install / personal data - never committed, see memory/protect-user-data.md.

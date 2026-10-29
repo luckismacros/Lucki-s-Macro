@@ -993,6 +993,18 @@ class SettingsSheet(FloatingDialog):
         self._open_release_btn.clicked.connect(
             lambda: os.startfile(self.host._update_info["url"]) if self.host._update_info else None)
         u_row.addWidget(self._open_release_btn)
+        # Installs in place and restarts (modules/self_update.py) - the built app only.
+        self._install_update_btn = Button("Install update", "accent", icon="download", height=34, font_px=12)
+        self._install_update_btn.setFocusPolicy(Qt.NoFocus)
+
+        def on_install(_=False):
+            info = self.host._update_info
+            if info:
+                self.accept()
+                self.host.install_update(info)
+
+        self._install_update_btn.clicked.connect(on_install)
+        u_row.addWidget(self._install_update_btn)
         sec_u.col.addLayout(u_row)
         sec_u.col.addWidget(label("Updating is still manual: download the new version and extract it OVER your "
                                   "existing \"Lucki's Macro\" folder (say yes to replacing files) - don't delete "
@@ -1115,7 +1127,10 @@ class SettingsSheet(FloatingDialog):
             self._update_body.setText(f"v{info['version']} is available - this is v{config.APP_VERSION}.{notes}")
         else:
             self._update_body.setText(f"You're on v{config.APP_VERSION}.")
-        self._open_release_btn.setVisible(bool(info))
+        from modules import self_update
+        installable = bool(info) and bool(info.get("download_url")) and self_update.supported()
+        self._install_update_btn.setVisible(installable)
+        self._open_release_btn.setVisible(bool(info) and not installable)
 
     def _after_update_check(self, info, check_btn):
         self.host._update_info = info

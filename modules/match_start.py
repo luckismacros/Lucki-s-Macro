@@ -123,7 +123,19 @@ def click_challenge_start(after_match=False):
         where = "cold-entry"
 
     dismiss_click_anywhere_if_present(capture_screen())
-    print(f"[click_challenge_start] Clicking {where} Start at ({x}, {y})")
+    # The party screen's Start is the same button as Story's (START_BTN_X/Y and
+    # CHALLENGE_START_X/Y are the same point), so it's found and its click confirmed like
+    # everywhere else - a blind click that landed during the slide-in used to leave the
+    # run waiting minutes for a match that never started. The measured point is still
+    # what's clicked when the button is where it should be.
+    found = poll_until([target(config.START_PARTY_BTN, True, debug_label="click_challenge_start")],
+                       interval=0.3, label="click_challenge_start", timeout=config.TIMEOUT_SECONDS,
+                       stuck_timeout=None)
+    if found in ("RECONNECTED", False):
+        return found
+    if found is True:
+        return _click_start_button("click_challenge_start", fixed_point=(x, y))
+    print(f"[click_challenge_start] Start button not recognised - clicking the {where} point ({x}, {y}).")
     click_at(x, y)
     return True
 
