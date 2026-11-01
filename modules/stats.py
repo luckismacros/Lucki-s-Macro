@@ -61,6 +61,7 @@ class SessionStats:
         self.challenges_skipped = 0
         self.restarts = 0
         self.rifts = 0
+        self.shos = 0
         self._match_started_at = None
         self._match_durations = []
 
@@ -137,6 +138,10 @@ class SessionStats:
         """Monster Clash: the Monster's Rift spawned and was entered."""
         self.rifts += 1
 
+    def sho_obtained(self):
+        """Sho Farm: 16 Torn Photos turned in for a Sho."""
+        self.shos += 1
+
     def restarted(self):
         """A Never Stop restart after the run stopped on its own."""
         self.restarts += 1
@@ -153,6 +158,8 @@ class SessionStats:
             parts.append(f"{self.rewards_picked} rewards")
         if self.rifts:
             parts.append(f"{self.rifts} rifts")
+        if self.shos:
+            parts.append(f"{self.shos} Sho")
         if self.disconnects:
             parts.append(f"{self.disconnects} reconnects")
         if self.restarts:
@@ -190,6 +197,8 @@ class SessionStats:
             fields.append(("Skipped (cooldown)", str(self.challenges_skipped)))
         if self.rifts:
             fields.append(("Rifts", str(self.rifts)))
+        if self.shos:
+            fields.append(("Sho obtained", str(self.shos)))
         if self.disconnects:
             fields.append(("Reconnects", str(self.disconnects)))
         if self.restarts:
@@ -217,6 +226,8 @@ class SessionStats:
             lines.append(f"  Challenges skipped:  {self.challenges_skipped} (on cooldown)")
         if self.rifts:
             lines.append(f"  Rifts entered:       {self.rifts}")
+        if self.shos:
+            lines.append(f"  Sho obtained:        {self.shos}")
         if self.disconnects:
             lines.append(f"  Disconnects handled: {self.disconnects}")
         if self.restarts:

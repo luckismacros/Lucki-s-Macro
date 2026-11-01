@@ -47,6 +47,7 @@ NAV = [
     ("story", "Story", "story"), ("raids", "Raids", "raids"), ("challenges", "Challenges", "challenges"),
     ("portals", "Portals", "portals"), ("expeditions", "Expeditions", "expeditions"),
     ("bossrush", "Boss Rush", "bossrush"), ("monsterclash", "Monster Clash", "monsterclash"),
+    ("events", "Events", "events"),
     ("queue", "Queue", "list"),
     ("others", "Others", "others"),
 ]
@@ -1149,7 +1150,7 @@ class MainWindow(QMainWindow):
         return False, "Couldn't get back to the lobby within 2 minutes - see the screenshot."
 
     # Modes /mode can start: every page with a run of its own.
-    BOT_MODES = [(key, "Others (Gem Farm / Sharkfang)" if key == "others" else label) for key, label, _ in NAV]
+    BOT_MODES = [(key, {"others": "Others (Gem Farm / Sho)", "events": "Events (Halloween / Sharkfang)"}.get(key, label)) for key, label, _ in NAV]
 
     def bot_mode(self, key, monster_clash_mode=None):
         return self._bot_action("mode", lambda: self._bot_mode(key, monster_clash_mode))
@@ -1628,7 +1629,14 @@ class MainWindow(QMainWindow):
 
     def _restore_ui_state(self):
         ui = self.user_settings.get("ui_state") or {}
-        for key, data in (ui.get("pages") or {}).items():
+        pages = dict(ui.get("pages") or {})
+        others = pages.get("others")
+        # Sharkfang / Halloween were on the Others page until the Events page existed.
+        if "events" not in pages and isinstance(others, dict) and others.get("mode") in ("halloween", "sharkfang"):
+            pages["events"] = others
+        if ui.get("mode") == "others" and isinstance(others, dict) and others.get("mode") in ("halloween", "sharkfang")                 and "events" not in (ui.get("pages") or {}):
+            ui = dict(ui, mode="events")
+        for key, data in pages.items():
             if key in self.pages and isinstance(data, dict):
                 try:
                     self.pages[key].full_restore(data)

@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "3.6.1"
+APP_VERSION = "3.7"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -810,7 +810,8 @@ GAMEMODES = {
     "portals":     {"label": "Portals",     "enabled": True},
     "bossrush":    {"label": "Boss Rush",   "enabled": True},
     "monsterclash": {"label": "Monster Clash", "enabled": True},
-    "others":      {"label": "Others",      "enabled": True},     # Gem Farm / Sharkfang (modules/gem_farm.py, sharkfang.py)
+    "events":      {"label": "Events",      "enabled": True},     # Halloween / Sharkfang (modules/halloween.py, sharkfang.py)
+    "others":      {"label": "Others",      "enabled": True},     # Gem Farm / Sho (modules/gem_farm.py, sho.py)
 }
 
 # How often to click Reconnect on the disconnect popup while waiting to get back in.
@@ -1453,7 +1454,7 @@ MONSTER_CLASH_CUTSCENE_WAIT = 180.0
 # A Start Game seen this soon after starting a match is that match's own button fading out.
 MONSTER_CLASH_MIN_MATCH = 20.0
 
-# --- Sharkfang Farm (Others page, limited Tidal Siege event - remove when it ends) ------
+# --- Sharkfang Farm (Events page, limited Tidal Siege event - remove when it ends) ------
 # Captured at 1920x1080 and rescaled 1600/1919 like Monster Clash's (originals kept
 # locally in sharkfang/_original_1920x1080/). See modules/sharkfang.py.
 SHARKFANG_DIR = "assets/templates/sharkfang"
@@ -1542,3 +1543,162 @@ SHARKFANG_MATCH_LIMIT_SECONDS = 18 * 60.0
 SHARKFANG_OBTAIN_WAIT = 300.0
 # The Summer portal's map, so its Auto Play fishing walk is the one played.
 SHARKFANG_WALK_CATEGORY = "summer"
+
+# --- Sho Farm (Others page) ------------------------------------------------------------
+# The Infernal story stage (the map card with the "Infernal" tag - it changes over time)
+# farmed for Torn Photos; 16 of them are turned in at an NPC on Flaming Monastery Act 1
+# for Sho. Captured at 1920x1080 and rescaled 1600/1919 like Sharkfang's (originals and the
+# player's example screens kept locally in Others/Sho/_original_1920x1080/). See
+# modules/sho.py.
+SHO_DIR = "assets/templates/Others/Sho"
+SHO_STORY_CARD = f"{SHO_DIR}/Story_Card.png"              # its own crop of the Story mode card
+SHO_INFERNAL_TAG = f"{SHO_DIR}/Infernal.png"              # the tag above the map's name on its card
+# The same tag drawn smaller, when it shares the card with the Eclipse tag (Both_Tags.png
+# shows the pair). Cropped from a live 1600x900 frame (King's Tomb, 2026-11-01): 1.00 on it,
+# at most 0.45 anywhere else; the big tag above only reached 0.73 on it.
+SHO_INFERNAL_TAG_SMALL = f"{SHO_DIR}/Infernal_Small.png"
+# Its Eclipse neighbour, cropped from the same frame - not used yet (Griffith Farm will).
+SHO_ECLIPSE_TAG_SMALL = f"{SHO_DIR}/Eclipse_Small.png"
+SHO_STAGE_ICON = f"{SHO_DIR}/Stage_Icon.png"              # the fire tile at the top of the act list
+SHO_SELECT_STAGE_BTN = f"{SHO_DIR}/Select_Stage.png"
+SHO_START_BTN = f"{SHO_DIR}/Start_Stage.png"              # the party screen's Start
+SHO_REPEAT_STAGE_BTN = f"{SHO_DIR}/Repeat_Stage.png"
+SHO_CLOSE_BTN = f"{SHO_DIR}/Close_Button.png"             # the victory panel's red X
+SHO_PLAY_SMALL_BTN = f"{SHO_DIR}/Play_Small.png"
+SHO_CHANGE_GAMEMODE_BTN = f"{SHO_DIR}/Change_Gamemode.png"
+SHO_FLAMING_MONASTERY = f"{SHO_DIR}/Flaming_Monastery.png"  # the map's name on its card
+SHO_ACT_1 = f"{SHO_DIR}/Act_1.png"                        # Act 1's tile, selected (blue)
+SHO_SELECT_STAGE_FLAMING_BTN = f"{SHO_DIR}/Select_Stage_Flaming.png"
+SHO_START_FLAMING_BTN = f"{SHO_DIR}/Start_Flaming.png"
+# The Torn Photo reward card on the victory panel, by its picture and name only - two looks:
+# at the limit (greyed photo on yellow, cut from Example_Limit_Exceeded.png) and normal (cream
+# photo on green, cut from a live 1600x900 victory panel, 2026-11-01). Each scores 0.99-1.00
+# on its own look, ~0.76 on the other's and at most 0.45 on anything else - hence 0.70.
+SHO_TORN_PHOTO = f"{SHO_DIR}/Torn_Photo.png"
+SHO_TORN_PHOTO_NORMAL = f"{SHO_DIR}/Torn_Photo_Normal.png"
+# The red warning triangle in the card's top right corner = the photo limit is reached
+# (the card also gets a red outline). 0.97 on it, 0.49 on the Angel Blade card's corner.
+# Only ever looked for at that corner of a found Torn Photo card.
+SHO_LIMIT_WARNING = f"{SHO_DIR}/Limit_Warning.png"
+SHO_LIMIT_EXCEEDED = f"{SHO_DIR}/Limit_Exceeded.png"      # the whole card, warning and all (kept for reference)
+# The NPC's panel: the Turn In button greyed out (not enough photos)...
+SHO_NO_TURN_IN = f"{SHO_DIR}/No_Turn_in.png"
+# ...and the Torn Photo icon on that button, which is drawn the same whether the button
+# is grey or not - it finds the button in either state (0.99 on No_Turn_in.png).
+SHO_TURN_IN_PHOTO = f"{SHO_DIR}/Turn_In_Photo.png"
+# The Turn In button when it CAN be pressed. Not captured yet - when this file exists it is
+# used first; until then "the button is there and doesn't look like No_Turn_in" decides.
+SHO_TURN_IN_BTN = f"{SHO_DIR}/Turn_In.png"
+# "Obtained Rewards" - the popup with the new unit (a copy of Sharkfang's obtained_title).
+SHO_OBTAINED_TITLE = f"{SHO_DIR}/Obtained_Title.png"
+# The NPC's dialogue box: its bottom edge with the "next" arrow. Clicked to move the dialogue
+# on (a click anywhere else doesn't). After the unit, E again -> dialogue -> Accept Quest ->
+# more dialogue: the quest for the next Sho has to be accepted.
+SHO_DIALOGUE_BTN = f"{SHO_DIR}/Dialogue_Click.png"
+# The same arrow cropped tighter from a live 1600x900 frame: the box grows with its text, so
+# the full-width crop above (its ornaments at the edges) scored only 0.53 on a longer line.
+# 1.00 there, at most 0.58 on every other saved frame.
+SHO_DIALOGUE_ARROW = f"{SHO_DIR}/Dialogue_Arrow.png"
+SHO_ACCEPT_QUEST_BTN = f"{SHO_DIR}/Accept_Quest.png"
+# Offered by the NPC once the quest is accepted: opens the Infernal stage's Select Stage
+# straight away - no menus, no looking for the tag.
+SHO_INFERNAL_STAGE_BTN = f"{SHO_DIR}/Infernal_Stage.png"
+# The NPC panel's Leave button (next to Turn In / View Info). The panel hides the stage's own
+# buttons, small Play included, until it's left. Cropped from a live 1600x900 frame.
+SHO_LEAVE_BTN = f"{SHO_DIR}/Leave.png"
+
+for _path in (SHO_STORY_CARD, SHO_SELECT_STAGE_BTN, SHO_REPEAT_STAGE_BTN, SHO_PLAY_SMALL_BTN,
+              SHO_CHANGE_GAMEMODE_BTN, SHO_SELECT_STAGE_FLAMING_BTN, SHO_OBTAINED_TITLE):
+    TEMPLATE_THRESHOLDS.setdefault(_path, 0.75)   # rescaled crops, as Sharkfang's menu buttons
+TEMPLATE_THRESHOLDS.update({
+    SHO_START_BTN: 0.85,                      # the green buttons look alike - see MONSTER_CLASH_START_BTN
+    SHO_START_FLAMING_BTN: 0.85,
+    SHO_INFERNAL_TAG: 0.80,
+    SHO_INFERNAL_TAG_SMALL: 0.80,
+    SHO_ECLIPSE_TAG_SMALL: 0.80,
+    SHO_DIALOGUE_BTN: 0.80,
+    SHO_DIALOGUE_ARROW: 0.80,
+    SHO_INFERNAL_STAGE_BTN: 0.75,
+    SHO_ACCEPT_QUEST_BTN: 0.80,
+    SHO_LEAVE_BTN: 0.85,
+    SHO_STAGE_ICON: 0.80,                     # 0.96 on the tile, 0.24 on the numbered tiles
+    SHO_CLOSE_BTN: 0.80,
+    SHO_FLAMING_MONASTERY: 0.80,
+    SHO_ACT_1: 0.80,
+    SHO_TORN_PHOTO: 0.70,
+    SHO_TORN_PHOTO_NORMAL: 0.70,
+    SHO_LIMIT_WARNING: 0.80,
+    SHO_TURN_IN_PHOTO: 0.75,
+    SHO_TURN_IN_BTN: 0.80,
+})
+# Greyed out or not is decided by the button's COLOUR, not by how well No_Turn_in.png
+# matches: template matching subtracts each colour's average, so the same button recoloured
+# green still matched it (tested). A greyed out button is flat dark grey (BGR 41,41,41 on
+# No_Turn_in.png); its centre, between "In" and the number, is bare background - this dark
+# and this colourless there = greyed out.
+SHO_GREY_MAX_BRIGHTNESS = 70
+SHO_GREY_MAX_SPREAD = 18
+# Reference px from the Turn In button's Torn Photo icon to the button's centre (measured on
+# No_Turn_in.png) - how the button is found when it isn't greyed out.
+SHO_TURN_IN_BTN_DX, SHO_TURN_IN_BTN_DY = -76, 2
+# Reference px from a Torn Photo card's centre (as SHO_TORN_PHOTO finds it) to its warning
+# triangle's centre (measured on Example_Limit_Exceeded.png).
+SHO_LIMIT_WARNING_DX, SHO_LIMIT_WARNING_DY = 27.5, -34.5
+# The map's name sits this far below its Infernal tag - the click lands on the name (29 live,
+# 31 on the player's example).
+SHO_INFERNAL_NAME_DY = 30
+# Dialogue clicks before giving up on it (each waits for the next line to show).
+SHO_DIALOGUE_MAX_CLICKS = 15
+# 16 Torn Photos = 1 Sho. Wins are counted (a win always pays one photo); this many - or the
+# limit warning on the reward, whichever comes first - sends the macro to the NPC.
+SHO_PHOTOS_NEEDED = 16
+# The walk from the Flaming Monastery spawn to the NPC (walk only, camera fixed first):
+# presets/sho_npc_walk_<name>.json.
+SHO_PRESET_LOCATION = "sho"
+SHO_WALK_VARIANT = "npc_walk"
+# Walk + E tries at the NPC before the trip counts as failed (each retry teleports to spawn).
+SHO_NPC_ATTEMPTS = 3
+# After E: how long the NPC's panel gets to show up.
+SHO_NPC_PANEL_WAIT = 6.0
+# Trips to the NPC in a row that may fail before the run stops (the walk needs re-recording).
+SHO_TRIP_ATTEMPTS = 3
+
+# --- Halloween Event (Events page) ---------------------------------------------------------
+# LIMITED EVENT ("Ends Update 6") - when it ends, delete this block, modules/halloween.py,
+# assets/templates/Halloween/, run_halloween() in engine.py and the Halloween option on the
+# Events page. The player's crops were taken at 1919 px wide and rescaled to the 1600x900
+# reference (originals in assets/templates/Halloween/_original_1919/).
+HALLOWEEN_DIR = "assets/templates/Halloween"
+HALLOWEEN_EVENTS_BTN = f"{HALLOWEEN_DIR}/Events.png"                # the lobby's Events button
+# The card's "Major Event / Halloween Event" text, cropped from a live 1600x900 Events list:
+# the player's crop of the whole card (Halloween_Event.png) scored 0.71 there - the card's
+# art behind the text isn't the same. 1.00 on the card, 0.52 on anything else on that screen.
+HALLOWEEN_EVENT_CARD = f"{HALLOWEEN_DIR}/Halloween_Event_Live.png"
+HALLOWEEN_EVENT_GAMEMODE_BTN = f"{HALLOWEEN_DIR}/Event_Gamemode.png"
+HALLOWEEN_SELECT_STAGE_BTN = f"{HALLOWEEN_DIR}/Select_Stage.png"
+HALLOWEEN_START_BTN = f"{HALLOWEEN_DIR}/Start_Stage.png"            # the party screen's Start
+HALLOWEEN_REPEAT_STAGE_BTN = f"{HALLOWEEN_DIR}/Repeat_Stage.png"
+# The stage counter at the top (the circle left of "Heat Bars"): its look at stage 4. The
+# circle changes colour with the stage - 0.29 on stage 2's purple one.
+HALLOWEEN_STAGE_4 = f"{HALLOWEEN_DIR}/Stage_4.png"
+HALLOWEEN_STAGE_X, HALLOWEEN_STAGE_Y = 571, 89                     # where that circle sits (reference px)
+HALLOWEEN_STAGE_REACH = 70                                         # how far around it to look
+HALLOWEEN_FORGE_BTN = f"{HALLOWEEN_DIR}/Forge.png"                  # bottom middle, above the money
+# The Forge's Final Boss card: the whole card, and its top (icon, name, text) - the top alone
+# stays the same whether its Buy button can be pressed or not.
+HALLOWEEN_FINAL_BOSS_CARD = f"{HALLOWEEN_DIR}/Final_Boss_Card.png"
+HALLOWEEN_FINAL_BOSS_TITLE = f"{HALLOWEEN_DIR}/Final_Boss_Title.png"
+# "Buy 500" - every card has one, so it's only ever looked for below the Final Boss card's top.
+HALLOWEEN_BUY_BTN = f"{HALLOWEEN_DIR}/Buy_Card.png"
+# The Forge's X, closed after buying - the same X as Sho's panels (its crop is reused).
+HALLOWEEN_CLOSE_BTN = SHO_CLOSE_BTN
+
+for _path in (HALLOWEEN_EVENTS_BTN, HALLOWEEN_EVENT_CARD, HALLOWEEN_EVENT_GAMEMODE_BTN, HALLOWEEN_SELECT_STAGE_BTN,
+              HALLOWEEN_REPEAT_STAGE_BTN, HALLOWEEN_FORGE_BTN, HALLOWEEN_FINAL_BOSS_CARD,
+              HALLOWEEN_FINAL_BOSS_TITLE, HALLOWEEN_BUY_BTN):
+    TEMPLATE_THRESHOLDS.setdefault(_path, 0.75)   # rescaled crops, as Sho's and Sharkfang's
+TEMPLATE_THRESHOLDS.update({
+    HALLOWEEN_EVENT_CARD: 0.80,
+    HALLOWEEN_START_BTN: 0.85,                # the green buttons look alike - see MONSTER_CLASH_START_BTN
+    HALLOWEEN_STAGE_4: 0.80,
+})

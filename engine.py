@@ -1851,7 +1851,7 @@ class BotEngine:
 
     def run_sharkfang(self, fish_pos, equip_rod=False):
         """
-        Sharkfang Farm (Others page, limited Tidal Siege event): fish on the event stage, keep
+        Sharkfang Farm (Events page, limited Tidal Siege event): fish on the event stage, keep
         the tooth, use it in the storm, restart after a Sharkfang or 18 minutes without a tooth -
         Monster Clash Farm's loop with modules/sharkfang.py's runner. The walk is the Summer
         portal's.
@@ -1865,6 +1865,33 @@ class BotEngine:
                    f"The bar is kept empty from {config.SHARKFANG_BAR_FIRST_CHECK_SECONDS / 60:.0f} minutes in, the tooth "
                    f"is used when the storm comes, and the match restarts after a Sharkfang or after "
                    f"{config.SHARKFANG_MATCH_LIMIT_SECONDS / 60:.0f} minutes without a tooth.")
+
+    def run_sho(self, walk_preset_name):
+        """
+        Sho Farm (Others page): the Infernal story stage on Auto Play, counting the Torn
+        Photos, then the walk to the NPC on Flaming Monastery to turn 16 in for Sho - the
+        shared runner loop with modules/sho.py's runner.
+        """
+        from modules.sho import ShoRunner
+        return self.run_monster_clash(
+            "farm", None, _label="Sho Farm",
+            _runner_factory=lambda sp: ShoRunner(walk_preset_name, set_phase=sp),
+            _intro=f"Sho Farm - the Infernal story stage on Auto Play; after {config.SHO_PHOTOS_NEEDED} Torn Photos "
+                   f"(or the limit warning on the reward) it walks to the NPC on Flaming Monastery with "
+                   f"'{walk_preset_name}' and turns them in. The game's Auto Start and Auto Retry must be OFF.")
+
+    def run_halloween(self):
+        """
+        Halloween Event (Events page, LIMITED): the event stage on Auto Play, the Final Boss
+        bought from the Forge at stage 4, Repeat Stage - the shared runner loop with
+        modules/halloween.py's runner.
+        """
+        from modules.halloween import HalloweenRunner
+        return self.run_monster_clash(
+            "farm", None, _label="Halloween Event",
+            _runner_factory=lambda sp: HalloweenRunner(set_phase=sp),
+            _intro="Halloween Event - the event stage on Auto Play; at stage 4 it buys the Final Boss from the Forge, "
+                   "then Repeat Stage. The game's Auto Start and Auto Retry must be OFF.")
 
     def _supervised_run(self, target, args):
         """

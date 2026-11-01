@@ -1334,14 +1334,14 @@ class OthersPage(ModePage):
     Others, two farms:
       Gem Farm  - King's Tomb's Master stage on the game's Auto Play, repeated by the game's own
                   Auto Start + Auto Retry (100 gems every 40-50s) - modules/gem_farm.py.
-      Sharkfang - the limited Tidal Siege event: fish, bin the junk, use the tooth in the storm,
-                  restart after a Sharkfang or 18 minutes without a tooth - modules/sharkfang.py. Remove this
-                  option when the event ends.
+      Sho       - the Infernal story stage on Auto Play for Torn Photos, then the recorded walk to the
+                  NPC on Flaming Monastery to turn 16 in for Sho - modules/sho.py.
+    The limited events (Sharkfang, Halloween) are on the Events page.
     """
     key = "others"
-    runs_unit_hint = "Gem Farm: each win is about 100 gems. Sharkfang: each Sharkfang obtained."
+    runs_unit_hint = "Gem Farm: each win is about 100 gems. Sho: each Infernal match."
 
-    _MODES = [("gem", "Gem Farm"), ("sharkfang", "Sharkfang")]
+    _MODES = [("gem", "Gem Farm"), ("sho", "Sho")]
 
     def __init__(self, host):
         super().__init__(host)
@@ -1359,6 +1359,108 @@ class OthersPage(ModePage):
                                            "just keeps it going: reconnects if you get disconnected, and clicks every "
                                            "few minutes so Roblox doesn't kick you for being idle.", "hint", wrap=True))
         self.gem_card.set_done(True)
+
+        self.sho_card = self.add_card(StepCard(2, "Sho"))
+        self.sho_card.body.addWidget(label("The Infernal story stage on the game's Auto Play, for Torn Photos. "
+                                           "16 Torn Photos = 1 Sho.", "muted", wrap=True))
+        self.sho_card.body.addWidget(label(
+            "In the game, turn Auto Start and Auto Retry OFF first. The macro goes Play › Story › the map with the "
+            "Infernal tag › the fire stage, plays it on Auto Play and repeats it, counting the Torn Photos. After 16 "
+            "(or when the Torn Photo reward shows the red limit warning) it goes to Flaming Monastery Act 1, walks "
+            "to the NPC with your recording below, presses E and turns the photos in - then starts farming again.",
+            "hint", wrap=True))
+        self.sho_card.set_done(True)
+
+        self.walk_picker = self.add_card(PresetPicker(host, 3, "Walk to the NPC", self._walk_slot,
+                                                       allow_auto=False, trailing_text="walk only"))
+        self.walk_picker.body.addWidget(label(
+            "Record it on Flaming Monastery Act 1, from where the stage spawns you, before pressing Start Game: "
+            "Fix camera first, then Record (F8), walk with W/A/S/D until you're right next to the NPC, F8 again. "
+            "Don't press E - the macro does that.", "hint", wrap=True))
+        self.walk_picker.changed.connect(self.emit_changed)
+        self.finish()
+        self._on_mode()
+
+    def _walk_slot(self):
+        return config.SHO_PRESET_LOCATION, config.SHO_WALK_VARIANT
+
+    def on_shown(self):
+        self.walk_picker.refresh_list(force=True)
+
+    def _on_mode(self, *_):
+        mode = self.mode.value()
+        self.gem_card.setVisible(mode == "gem")
+        self.sho_card.setVisible(mode == "sho")
+        self.walk_picker.setVisible(mode == "sho")
+        self.emit_changed()
+
+    def checks(self):
+        if self.mode.value() == "sho":
+            return [("Units", "ok", "the game's Auto Play"), ("NPC walk", *self.walk_picker.check())]
+        return [("Units", "ok", "the game's Auto Play")]
+
+    def run_spec(self):
+        if self.mode.value() == "sho":
+            name = self.walk_picker.recording_name()
+            if not name:
+                raise ValueError("Record the walk to the NPC first: click New on it, then Record (F8) in Roblox.")
+            loc, var = self.walk_picker.slot()
+            if not preset_core.load_actions(loc, var, name):
+                raise ValueError(f"The walk to the NPC '{pretty(name)}' has no steps yet. Press Record (F8) in "
+                                 f"Roblox first.")
+            return "run_sho", (name,), [("Gamemode", "Sho Farm"), ("Stage", "Infernal story stage"),
+                                        ("NPC walk", name)]
+        return "run_gem_farm", (), [("Gamemode", "Gem Farm"), ("Stage", "King's Tomb - Master")]
+
+    def summary(self):
+        if self.mode.value() == "sho":
+            return f"Sho - Infernal stage, NPC walk '{pretty(self.walk_picker.recording_name())}'"
+        return "Gem Farm - King's Tomb Master, Auto Play"
+
+    def state(self):
+        return {"mode": self.mode.value(), "walk": self.walk_picker.state()}
+
+    def restore(self, data):
+        if "walk" in data:
+            self.walk_picker.restore(data["walk"])
+        # Sharkfang / Halloween saved here before the Events page existed: those moved there.
+        if data.get("mode") in dict(self._MODES):
+            self.mode.set_value(data["mode"], animate=False)
+        self._on_mode()
+
+
+class EventsPage(ModePage):
+    """
+    Events - the limited-time events, each removed when its event ends:
+      Halloween - the Halloween Event: the Final Boss bought from the Forge at stage 4, Repeat
+                  Stage - modules/halloween.py.
+      Sharkfang - the Tidal Siege event: fish, bin the junk, use the tooth in the storm, restart
+                  after a Sharkfang or 18 minutes without a tooth - modules/sharkfang.py.
+    Both lived on the Others page until 2026-11-02; their saved settings are moved over (see
+    MainWindow._restore_ui_state and QueuePage.restore).
+    """
+    key = "events"
+    runs_unit_hint = "Halloween: each match. Sharkfang: each Sharkfang obtained."
+
+    _MODES = [("halloween", "Halloween"), ("sharkfang", "Sharkfang")]
+    MOVED_FROM_OTHERS = ("halloween", "sharkfang")
+
+    def __init__(self, host):
+        super().__init__(host)
+        c1 = self.add_card(StepCard(1, "Which event"))
+        self.mode = Segmented(self._MODES, "halloween")
+        self.mode.changed.connect(self._on_mode)
+        c1.body.addWidget(self.mode)
+        c1.set_done(True)
+
+        self.halloween_card = self.add_card(StepCard(2, "Halloween Event", label("limited event", "hint")))
+        self.halloween_card.body.addWidget(label("The Halloween Event stage on the game's Auto Play, ended early "
+                                                 "with the Final Boss.", "muted", wrap=True))
+        self.halloween_card.body.addWidget(label(
+            "In the game, turn Auto Start and Auto Retry OFF first. The macro joins (Events › Halloween Event › Select "
+            "Stage › Start), turns Auto Play on and starts the match. At stage 4 it opens the Forge and buys the Final "
+            "Boss; after the match it clicks Repeat Stage and goes again.", "hint", wrap=True))
+        self.halloween_card.set_done(True)
 
         self.shark_card = self.add_card(StepCard(2, "Sharkfang", label("limited event", "hint")))
         self.shark_card.body.addWidget(label("Tidal Siege's Event Gamemode, on the game's Auto Play, fishing the "
@@ -1401,9 +1503,9 @@ class OthersPage(ModePage):
         self._on_mode()
 
     def _on_mode(self, *_):
-        shark = self.mode.value() == "sharkfang"
-        self.gem_card.setVisible(not shark)
-        self.shark_card.setVisible(shark)
+        mode = self.mode.value()
+        self.halloween_card.setVisible(mode == "halloween")
+        self.shark_card.setVisible(mode == "sharkfang")
         self.emit_changed()
 
     def _locate_fish_spot(self):
@@ -1415,7 +1517,7 @@ class OthersPage(ModePage):
         self.host._pick_screen_click(picked, "Click the fishing spot in Roblox. Esc cancels.")
 
     def checks(self):
-        if self.mode.value() != "sharkfang":
+        if self.mode.value() == "halloween":
             return [("Units", "ok", "the game's Auto Play")]
         walk_recorded = any(os.path.exists(preset_core.preset_path(config.PORTAL_PRESET_LOCATION,
                                                                     config.SHARKFANG_WALK_CATEGORY, name))
@@ -1429,19 +1531,18 @@ class OthersPage(ModePage):
             pos = (self.fish_x.value(), self.fish_y.value())
             return "run_sharkfang", (pos, self.rod.isChecked()), [("Gamemode", "Sharkfang"),
                                                                   ("Stage", "Tidal Siege - Event Gamemode")]
-        return "run_gem_farm", (), [("Gamemode", "Gem Farm"), ("Stage", "King's Tomb - Master")]
+        return "run_halloween", (), [("Gamemode", "Halloween Event"), ("Boss", "Final Boss at stage 4")]
 
     def summary(self):
         if self.mode.value() == "sharkfang":
             return "Sharkfang - Tidal Siege, fishing"
-        return "Gem Farm - King's Tomb Master, Auto Play"
+        return "Halloween Event - Final Boss at stage 4, Repeat Stage"
 
     def state(self):
         return {"mode": self.mode.value(), "rod": self.rod.isChecked(),
                 "fish": [self.fish_x.value(), self.fish_y.value()]}
 
     def restore(self, data):
-        # Saved before Sharkfang existed, the page was Gem Farm only.
         if data.get("mode") in dict(self._MODES):
             self.mode.set_value(data["mode"], animate=False)
         self.rod.setChecked(bool(data.get("rod", False)))
@@ -1593,7 +1694,12 @@ class QueuePage(ModePage):
         return {"items": self.items, "repeat": self.repeat.isChecked(), "skip_stuck": self.skip_stuck.isChecked()}
 
     def restore(self, data):
-        self.items = [i for i in (data.get("items") or []) if isinstance(i, dict) and i.get("mode") in PAGE_CLASSES]
+        items = [i for i in (data.get("items") or []) if isinstance(i, dict)]
+        for i in items:
+            # Sharkfang / Halloween steps saved while they were on the Others page.
+            if i.get("mode") == "others" and (i.get("state") or {}).get("mode") in EventsPage.MOVED_FROM_OTHERS:
+                i["mode"] = "events"
+        self.items = [i for i in items if i.get("mode") in PAGE_CLASSES]
         self.repeat.setChecked(bool(data.get("repeat", False)))
         self.skip_stuck.setChecked(bool(data.get("skip_stuck", False)))
         self._rebuild()
@@ -1603,5 +1709,5 @@ PAGE_CLASSES = {
     "story": StoryPage, "raids": RaidsPage, "challenges": ChallengesPage,
     "portals": PortalsPage, "expeditions": ExpeditionsPage, "bossrush": BossRushPage,
     "monsterclash": MonsterClashPage,
-    "others": OthersPage, "queue": QueuePage,
+    "events": EventsPage, "others": OthersPage, "queue": QueuePage,
 }

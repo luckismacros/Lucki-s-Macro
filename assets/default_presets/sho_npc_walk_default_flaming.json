@@ -1,0 +1,30 @@
+{
+    "location": "sho",
+    "variant": "npc_walk",
+    "reference": [
+        1600,
+        900
+    ],
+    "actions": [
+        {
+            "time": 1.0261156558990479,
+            "type": "keydown",
+            "key": "w"
+        },
+        {
+            "time": 2.945342540740967,
+            "type": "keyup",
+            "key": "w"
+        },
+        {
+            "time": 3.31427001953125,
+            "type": "keydown",
+            "key": "a"
+        },
+        {
+            "time": 3.469021797180176,
+            "type": "keyup",
+            "key": "a"
+        }
+    ]
+}

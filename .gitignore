@@ -35,3 +35,11 @@ design_mockup/
 
 # Local tooling config, not part of the project
 .claude/
+
+# Per-install mode state (Sho photo count, Sharkfang bar position)
+sho_farm.json
+sharkfang_bar.json
+
+# Tester logs and loose screenshots
+Testers New Logs/
+problem.png
