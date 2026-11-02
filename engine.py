@@ -1891,7 +1891,8 @@ class BotEngine:
             "farm", None, _label="Halloween Event",
             _runner_factory=lambda sp: HalloweenRunner(set_phase=sp),
             _intro="Halloween Event - the event stage on Auto Play; at stage 4 it buys the Final Boss from the Forge, "
-                   "then Repeat Stage. The game's Auto Start and Auto Retry must be OFF.")
+                   "then Repeat Stage (or carries on when the game's Auto Retry restarted it). Auto Start and Auto "
+                   "Retry can be on or off.")
 
     def _supervised_run(self, target, args):
         """

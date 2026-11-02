@@ -15,8 +15,11 @@ Fallbacks:
   - The Final Boss's Buy is only looked for under the Final Boss card's own top: every card
     in the Forge has the same "Buy 500" button.
   - The card not in view after Forge: scrolled down a little at a time, then back up.
-  - Bought but no end screen BUY_RETRY_AFTER later (the click didn't take, or there wasn't
-    enough candy yet): Forge -> Buy again.
+  - Bought, but the stage counter keeps going up (the boss would have ended the run): Forge ->
+    Buy again at once. No end screen BUY_RETRY_AFTER after a buy: the same.
+  - Forge clicked again while its panel doesn't open; a buy that failed is retried 10s later.
+  - Works with the game's Auto Start / Auto Retry ON or OFF: with Auto Retry the stage counter
+    dropping back (or the next match running) is the end of the match, nothing to click.
   - The stage is read two ways: the Stage_4 picture, and the white digit in the circle (any
     circle colour). Stage 4 or later on two looks in a row buys the boss - so a match picked
     up already running (after a restart) buys only once it's really at stage 4+.
@@ -68,6 +71,16 @@ STAGE_READS_NEEDED = 2          # the same stage 4+ read this many looks in a ro
 STAGE_GLYPH_REACH = 40          # ref px around the circle's centre to look for the digit
 # No stage number read this long into a match: a screenshot is saved once, to fix the read.
 STAGE_UNREADABLE_AFTER = 90.0
+# The stage read higher than the one the boss was bought at, this many looks in a row: the buy
+# didn't take (the boss would have ended the run) - buy again straight away.
+STAGE_UP_LOOKS = 2
+# The stage read lower than the highest seen this match, this many looks in a row: the game
+# started the stage over by itself (Auto Retry) - the match is over.
+STAGE_DOWN_LOOKS = 3
+# A buy that didn't get as far as clicking Buy: tried again this long after.
+BUY_FAIL_COOLDOWN = 10.0
+# Clicks on Forge before giving up on it opening.
+FORGE_OPEN_TRIES = 3
 _REPEATS = (config.HALLOWEEN_REPEAT_STAGE_BTN, config.REPEAT_STAGE_BTN)
 _CLOSES = (config.HALLOWEEN_CLOSE_BTN, config.CLOSE_BTN)
 # After Buy: how long the Forge's close button gets to show.
@@ -119,8 +132,9 @@ def _load_stage_digits():
 
 def read_stage(shot):
     """
-    (stage digit or None, confidence) from the stage circle: its near-white pixels only
-    (white and grey-ish, any circle colour behind), the digit-sized blob nearest the centre.
+    (stage number as text or None, confidence) from the stage circle: its near-white pixels
+    only (any circle colour behind), the digit-sized blob nearest the centre - and the one
+    beside it for stage 10+.
     """
     from modules import digits
     s = config.render_scale()
@@ -132,18 +146,27 @@ def read_stage(shot):
     lo, hi = area.min(axis=2).astype(int), area.max(axis=2).astype(int)
     mask = (((lo > 200) & (hi - lo < 40)) * 255).astype(np.uint8)
     n, _, stats, centres = cv2.connectedComponentsWithStats(mask)
-    best = None
+    blobs = []
     for i in range(1, n):
         x, y, w, h, a = stats[i]
         if not (9 * s <= h <= 24 * s and 3 * s <= w <= 20 * s and a >= 25 * s * s):
             continue
         d = (centres[i][0] + x0 - cx) ** 2 + (centres[i][1] + y0 - cy) ** 2
-        if best is None or d < best[0]:
-            best = (d, mask[y:y + h, x:x + w])
-    if best is None:
+        blobs.append((d, centres[i], mask[y:y + h, x:x + w]))
+    if not blobs:
         return None, 0.0
-    ch, conf = digits.classify_glyph(best[1], _load_stage_digits())
-    return (ch, conf) if ch is not None and conf >= STAGE_DIGIT_MIN else (None, conf)
+    blobs.sort(key=lambda b: b[0])
+    near = blobs[0]
+    # Stage 10+: two digits side by side. Each is read, left to right.
+    pair = [b for b in blobs[1:] if abs(b[1][0] - near[1][0]) <= 16 * s and abs(b[1][1] - near[1][1]) <= 4 * s]
+    glyphs = sorted([near] + pair[:1], key=lambda b: b[1][0])
+    out, worst = "", 1.0
+    for _, _, glyph in glyphs:
+        ch, conf = digits.classify_glyph(glyph, _load_stage_digits())
+        if ch is None or conf < STAGE_DIGIT_MIN:
+            return None, conf
+        out, worst = out + ch, min(worst, conf)
+    return out, worst
 
 
 def _halt(reason):
@@ -203,6 +226,8 @@ class HalloweenRunner:
         self.resumed = False              # the next Start Game wait is for a stage never left (Repeat Stage)
         self._match_started_at = 0.0
         self._last_result = None          # VICTORY / DEFEAT of the match that just ended, None = unknown
+        self._restarted = False           # the game's Auto Retry already started the next match
+        self._end_stage = None            # the highest stage read in the match that just ended
 
     def _phase(self, text, color="#4fc3f7"):
         if self.set_phase:
@@ -294,24 +319,44 @@ class HalloweenRunner:
                     return found
         return None
 
-    def _buy_final_boss(self):
-        """Forge -> the Final Boss card -> its Buy. True if Buy was clicked."""
-        self._phase("BUYING THE FINAL BOSS", "#f9a825")
-        shot = capture_screen()
-        card = _find(config.HALLOWEEN_FINAL_BOSS_TITLE, shot)
-        if not card:
-            forge = _find(config.HALLOWEEN_FORGE_BTN, shot)
-            if not forge:
-                path = health.save_debug_screenshot("halloween_no_forge")
-                print(f"[{TAG}] The Forge button isn't on screen (screen saved: {path}).")
-                return False
-            print(f"[{TAG}] Opening the Forge.")
-            click_at(forge[0], forge[1])
-            time.sleep(0.8)
+    def _open_forge_and_find_card(self):
+        """
+        The Final Boss card's top, opening the Forge first if it isn't open - Forge is clicked
+        again (up to FORGE_OPEN_TRIES) while the panel hasn't opened. Match or None.
+        """
+        for attempt in range(1, FORGE_OPEN_TRIES + 1):
+            if config.STOP_REQUESTED:
+                return None
+            shot = capture_screen()
+            card = _find(config.HALLOWEEN_FINAL_BOSS_TITLE, shot)
+            if card:
+                return card
+            panel_open = _find_any(_CLOSES, shot)[0] is not None
+            if not panel_open:
+                forge = _find(config.HALLOWEEN_FORGE_BTN, shot)
+                if not forge:
+                    path = health.save_debug_screenshot("halloween_no_forge", shot)
+                    print(f"[{TAG}] The Forge button isn't on screen (screen saved: {path}).")
+                    return None
+                print(f"[{TAG}] Opening the Forge{f' (attempt {attempt}/{FORGE_OPEN_TRIES})' if attempt > 1 else ''}.")
+                click_at(forge[0], forge[1])
+                time.sleep(0.8)
+                if _find(config.HALLOWEEN_FINAL_BOSS_TITLE) is None and _find_any(_CLOSES, capture_screen())[0] is None:
+                    continue                 # the panel didn't open - click Forge again
             card = self._find_card()
+            if card:
+                return card
+            return None                      # the Forge is open but the card isn't in it
+        print(f"[{TAG}] The Forge didn't open after {FORGE_OPEN_TRIES} clicks.")
+        return None
+
+    def _buy_final_boss(self):
+        """Forge -> the Final Boss card -> its Buy -> close. True if Buy was clicked."""
+        self._phase("BUYING THE FINAL BOSS", "#f9a825")
+        card = self._open_forge_and_find_card()
         if not card:
             path = health.save_debug_screenshot("halloween_no_final_boss")
-            print(f"[{TAG}] Couldn't find the Final Boss card in the Forge (screen saved: {path}).")
+            print(f"[{TAG}] Couldn't get to the Final Boss card (screen saved: {path}).")
             return False
         guess = (card[0], card[1] + BUY_DY)
         buy = _find_near(capture_screen(), config.HALLOWEEN_BUY_BTN, guess, BUY_REACH)
@@ -343,50 +388,86 @@ class HalloweenRunner:
 
     # --- the match ------------------------------------------------------------------------
     def play_match(self):
-        """Buys the Final Boss at stage 4, then waits for the end. "ENDED" / False / "RECONNECTED"."""
+        """
+        Buys the Final Boss at stage 4, then waits for the end - the end screen, or (the game's
+        Auto Retry on) the stage starting over. "ENDED" / False / "RECONNECTED".
+        """
         self._phase("WAITING FOR STAGE 4", "#4fc3f7")
         started = self._match_started_at or time.time()
         bought_at = [0.0]
+        bought_stage = [None]
+        next_try = [0.0]
         reads = [0]                       # looks in a row at stage 4 or later
+        up_looks = [0]                    # looks in a row above the stage the boss was bought at
+        down_looks = [0]                  # looks in a row below the highest stage this match
+        highest = [0]
+        prev_n = [None]
         last_stage = [None]
         last_read = [time.time()]
         unreadable_saved = [False]
+
+        def buy(stage_now):
+            if self._buy_final_boss():
+                bought_at[0] = time.time()
+                bought_stage[0] = stage_now
+                up_looks[0] = 0
+            else:
+                next_try[0] = time.time() + BUY_FAIL_COOLDOWN
 
         def watch(shot):
             now = time.time()
             if now - started >= MIN_MATCH and _find_any(_REPEATS, shot)[0]:
                 return "SCREEN"
-            if bought_at[0]:
-                if now - bought_at[0] >= BUY_RETRY_AFTER:
-                    print(f"[{TAG}] No end screen {BUY_RETRY_AFTER / 60:.0f} min after buying the Final Boss - "
-                          f"buying it again.")
-                    if self._buy_final_boss():
-                        bought_at[0] = time.time()
-                    else:
-                        bought_at[0] = now - BUY_RETRY_AFTER + 30.0    # try again in 30s
-                return None
             stage, conf = read_stage(shot)
-            if stage is not None:
+            n = int(stage) if stage is not None else None
+            if n is not None:
                 last_read[0] = now
-            if stage != last_stage[0] and stage is not None:
-                print(f"[{TAG}] Stage {stage} (read {conf:.2f}).")
-                last_stage[0] = stage
-            elif stage is None and not unreadable_saved[0] and now - last_read[0] >= STAGE_UNREADABLE_AFTER:
+                if n != last_stage[0]:
+                    print(f"[{TAG}] Stage {n} (read {conf:.2f}).")
+                    last_stage[0] = n
+                # Lower than the highest stage seen (read twice in a row, so one misread can't
+                # set it): the game started the stage over.
+                down_looks[0] = down_looks[0] + 1 if n < highest[0] else 0
+                if down_looks[0] >= STAGE_DOWN_LOOKS:
+                    return "RESTARTED"
+                if n == prev_n[0]:
+                    highest[0] = max(highest[0], n)
+                prev_n[0] = n
+            elif not unreadable_saved[0] and now - last_read[0] >= STAGE_UNREADABLE_AFTER:
                 unreadable_saved[0] = True
                 path = health.save_debug_screenshot("halloween_stage_unreadable", shot)
                 print(f"[{TAG}] Can't read the stage number (screen saved: {path}) - still watching for the "
                       f"Stage_4 picture too.")
+
+            if bought_at[0]:
+                # Still going up after the buy: the boss never came - buy again now.
+                if n is not None:
+                    up_looks[0] = up_looks[0] + 1 if bought_stage[0] is not None and n > bought_stage[0] else 0
+                if up_looks[0] >= STAGE_UP_LOOKS:
+                    print(f"[{TAG}] Stage {n} after buying the Final Boss at stage {bought_stage[0]} - the buy didn't "
+                          f"take. Buying it again.")
+                    buy(n)
+                elif now - bought_at[0] >= BUY_RETRY_AFTER:
+                    print(f"[{TAG}] No end screen {BUY_RETRY_AFTER / 60:.0f} min after buying the Final Boss - "
+                          f"buying it again.")
+                    buy(n if n is not None else bought_stage[0])
+                return None
+
+            if now < next_try[0]:
+                return None
             picture = _find_near(shot, config.HALLOWEEN_STAGE_4,
                                  (config.HALLOWEEN_STAGE_X, config.HALLOWEEN_STAGE_Y), config.HALLOWEEN_STAGE_REACH)
-            late = stage is not None and int(stage) >= 4
-            reads[0] = reads[0] + 1 if (late or picture) else 0
+            # An unreadable look (a popup over the counter, an effect) neither counts nor resets.
+            if (n is not None and n >= 4) or picture:
+                reads[0] += 1
+            elif n is not None:
+                reads[0] = 0
             if reads[0] >= STAGE_READS_NEEDED:
-                print(f"[{TAG}] Stage {stage or 4} reached ("
+                print(f"[{TAG}] Stage {n or 4} reached ("
                       f"{'picture ' + format(picture[2], '.2f') if picture else 'digit ' + format(conf, '.2f')}) - "
                       f"buying the Final Boss.")
                 reads[0] = 0
-                if self._buy_final_boss():
-                    bought_at[0] = time.time()
+                buy(n if n is not None else 4)
             return None
 
         print(f"[{TAG}] Waiting for stage 4...")
@@ -394,8 +475,17 @@ class HalloweenRunner:
                              target(config.DEFEAT_TEXT, "DEFEAT", debug_label="defeat")],
                             interval=1.0, label="halloween_match", stuck_timeout=self._stuck_timeout(),
                             custom_check=watch, lobby_grace=8.0, game_results=False)
+        self._end_stage = highest[0] or None
         if result in (False, "RECONNECTED"):
             return result
+        if result == "RESTARTED":
+            # Auto Retry: the end screen came and went between looks. The boss ends the run, so
+            # with it bought the match was won; without it the result is unknown.
+            print(f"[{TAG}] The stage started over by itself (Auto Retry) - the next match is already running.")
+            self._restarted = True
+            if bought_at[0] and not self._count("VICTORY"):
+                return False
+            return "ENDED"
         if result == "SCREEN":
             result = self._read_result()
         if not self._count(result):
@@ -436,28 +526,67 @@ class HalloweenRunner:
 
     # --- after the match --------------------------------------------------------------------
     def after_match(self):
-        """Repeat Stage. "START" / "LOST" (navigate() takes over) / False / "RECONNECTED"."""
-        self._phase("REPEATING THE STAGE")
+        """
+        The next match: Repeat Stage (Auto Retry off), or nothing to do when the game started it
+        over by itself (Auto Retry on). "START" / "IN_MATCH" / "LOST" (navigate() takes over) /
+        False / "RECONNECTED".
+        """
+        if self._restarted:
+            return self._next_already_running()
+        self._phase("NEXT MATCH")
+        end_stage = self._end_stage
+        lower_looks = [0]
+
+        def restarted(shot):
+            # The end screen gone and the stage counter back below where the match ended.
+            if _find_any(_REPEATS, shot)[0] or _find(config.VICTORY_TEXT, shot) or _find(config.DEFEAT_TEXT, shot):
+                lower_looks[0] = 0
+                return None
+            stage, _ = read_stage(shot)
+            low = stage is not None and (end_stage is None or int(stage) < end_stage)
+            lower_looks[0] = lower_looks[0] + 1 if low else 0
+            return "RESTARTED" if lower_looks[0] >= STAGE_DOWN_LOOKS else None
+
         result = poll_until([target(config.HALLOWEEN_REPEAT_STAGE_BTN, "REPEAT", debug_label="halloween_repeat"),
-                             target(config.REPEAT_STAGE_BTN, "REPEAT")],
-                            interval=1.0, label="halloween_repeat_wait", timeout=AFTER_MATCH_WAIT,
-                            stuck_timeout=None, lobby_grace=25.0)
+                             target(config.REPEAT_STAGE_BTN, "REPEAT"),
+                             target(config.START_GAME_BTN, "START")],
+                            interval=1.0, label="halloween_next_wait", timeout=AFTER_MATCH_WAIT,
+                            stuck_timeout=None, custom_check=restarted, lobby_grace=25.0)
         if result in (False, "RECONNECTED"):
             return result
+        if self._last_result is None and result == "REPEAT" and not self._count(self._read_result()):
+            return False
+        self._last_result = None
+        if result == "RESTARTED":
+            print(f"[{TAG}] The game started the stage over by itself (Auto Retry).")
+            return self._next_already_running()
+        if result == "START":
+            print(f"[{TAG}] The stage is back with Start Game up.")
+            self.resumed = True
+            return "START"
         if result != "REPEAT":
             path = health.save_debug_screenshot("halloween_no_repeat")
             print(f"[{TAG}] No Repeat Stage after the match (screen saved: {path}) - working out where we are.")
             return "LOST"
-        if self._last_result is None and not self._count(self._read_result()):
-            return False
-        self._last_result = None
         time.sleep(1.0)                    # it slides in - one click once it's settled
         template, match = _find_any(_REPEATS, capture_screen())
         if match:
             print(f"[{TAG}] Clicking Repeat Stage.")
             if not click_until_gone(template, match, "halloween_repeat", clicks=1):
+                # Auto Retry may have taken it away at the same moment - navigate() reads the screen.
                 path = health.save_debug_screenshot("halloween_repeat_stuck")
                 print(f"[{TAG}] Repeat Stage is still up after clicking (screen saved: {path}).")
                 return "LOST"
         self.resumed = True
         return "START"
+
+    def _next_already_running(self):
+        """The game's Auto Retry started the next match: Auto Play checked, then watch it."""
+        self._restarted = False
+        self._last_result = None
+        self._phase("CHECKING AUTO PLAY", "#2e7d32")
+        if not ensure_autoplay_enabled():
+            print(f"[{TAG}] WARNING: couldn't find the Auto Play button - carrying on.")
+        SESSION.match_started()
+        self._match_started_at = time.time()
+        return "IN_MATCH"
