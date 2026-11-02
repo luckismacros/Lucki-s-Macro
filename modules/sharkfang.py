@@ -1,9 +1,9 @@
 # modules/sharkfang.py
 """
-Sharkfang Farm (Events page, added 2026-10-19): the Tidal Siege summer event's fishing
+Sharkfang Farm (Others page, added 2026-10-19): the Tidal Siege summer event's fishing
 gamemode, farmed for its Sharkfang unit. LIMITED EVENT - when it ends, delete this
 module, its config block (SHARKFANG_*), assets/templates/sharkfang/, run_sharkfang() in
-engine.py and the Sharkfang option on the Events page (moved from Others 2026-11-02).
+engine.py and the Sharkfang option on the Others page.
 
 As described by the player (2026-10-19):
   Joining: Events -> Tidal Siege -> Event Gamemode -> Event Mode (on Mode Selection) ->

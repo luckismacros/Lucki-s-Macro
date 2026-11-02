@@ -1851,7 +1851,7 @@ class BotEngine:
 
     def run_sharkfang(self, fish_pos, equip_rod=False):
         """
-        Sharkfang Farm (Events page, limited Tidal Siege event): fish on the event stage, keep
+        Sharkfang Farm (Others page, limited Tidal Siege event): fish on the event stage, keep
         the tooth, use it in the storm, restart after a Sharkfang or 18 minutes without a tooth -
         Monster Clash Farm's loop with modules/sharkfang.py's runner. The walk is the Summer
         portal's.

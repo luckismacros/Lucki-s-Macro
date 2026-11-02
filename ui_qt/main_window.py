@@ -1150,7 +1150,7 @@ class MainWindow(QMainWindow):
         return False, "Couldn't get back to the lobby within 2 minutes - see the screenshot."
 
     # Modes /mode can start: every page with a run of its own.
-    BOT_MODES = [(key, {"others": "Others (Gem Farm / Sho)", "events": "Events (Halloween / Sharkfang)"}.get(key, label)) for key, label, _ in NAV]
+    BOT_MODES = [(key, {"others": "Others (Gem Farm / Sharkfang / Sho)", "events": "Events (Halloween)"}.get(key, label)) for key, label, _ in NAV]
 
     def bot_mode(self, key, monster_clash_mode=None):
         return self._bot_action("mode", lambda: self._bot_mode(key, monster_clash_mode))
@@ -1630,12 +1630,19 @@ class MainWindow(QMainWindow):
     def _restore_ui_state(self):
         ui = self.user_settings.get("ui_state") or {}
         pages = dict(ui.get("pages") or {})
-        others = pages.get("others")
-        # Sharkfang / Halloween were on the Others page until the Events page existed.
-        if "events" not in pages and isinstance(others, dict) and others.get("mode") in ("halloween", "sharkfang"):
+        others, events = pages.get("others"), pages.get("events")
+        # Halloween was on the Others page until the Events page existed.
+        if "events" not in pages and isinstance(others, dict) and others.get("mode") == "halloween":
             pages["events"] = others
-        if ui.get("mode") == "others" and isinstance(others, dict) and others.get("mode") in ("halloween", "sharkfang")                 and "events" not in (ui.get("pages") or {}):
-            ui = dict(ui, mode="events")
+            if ui.get("mode") == "others":
+                ui = dict(ui, mode="events")
+        # Sharkfang was on the Events page in 3.7 only - it's back on Others.
+        if isinstance(events, dict) and events.get("mode") == "sharkfang":
+            pages["others"] = dict(others if isinstance(others, dict) else {}, mode="sharkfang",
+                                   rod=events.get("rod", False), fish=events.get("fish"))
+            pages["events"] = dict(events, mode="halloween")
+            if ui.get("mode") == "events":
+                ui = dict(ui, mode="others")
         for key, data in pages.items():
             if key in self.pages and isinstance(data, dict):
                 try:

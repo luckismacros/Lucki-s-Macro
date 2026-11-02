@@ -810,8 +810,8 @@ GAMEMODES = {
     "portals":     {"label": "Portals",     "enabled": True},
     "bossrush":    {"label": "Boss Rush",   "enabled": True},
     "monsterclash": {"label": "Monster Clash", "enabled": True},
-    "events":      {"label": "Events",      "enabled": True},     # Halloween / Sharkfang (modules/halloween.py, sharkfang.py)
-    "others":      {"label": "Others",      "enabled": True},     # Gem Farm / Sho (modules/gem_farm.py, sho.py)
+    "events":      {"label": "Events",      "enabled": True},     # Halloween (modules/halloween.py)
+    "others":      {"label": "Others",      "enabled": True},     # Gem Farm / Sharkfang / Sho (gem_farm.py, sharkfang.py, sho.py)
 }
 
 # How often to click Reconnect on the disconnect popup while waiting to get back in.
@@ -1454,7 +1454,7 @@ MONSTER_CLASH_CUTSCENE_WAIT = 180.0
 # A Start Game seen this soon after starting a match is that match's own button fading out.
 MONSTER_CLASH_MIN_MATCH = 20.0
 
-# --- Sharkfang Farm (Events page, limited Tidal Siege event - remove when it ends) ------
+# --- Sharkfang Farm (Others page, limited Tidal Siege event - remove when it ends) ------
 # Captured at 1920x1080 and rescaled 1600/1919 like Monster Clash's (originals kept
 # locally in sharkfang/_original_1920x1080/). See modules/sharkfang.py.
 SHARKFANG_DIR = "assets/templates/sharkfang"

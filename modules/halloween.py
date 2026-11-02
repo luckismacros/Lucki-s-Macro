@@ -17,11 +17,16 @@ Fallbacks:
   - The card not in view after Forge: scrolled down a little at a time, then back up.
   - Bought but no end screen BUY_RETRY_AFTER later (the click didn't take, or there wasn't
     enough candy yet): Forge -> Buy again.
-  - A match picked up already running (after a restart) may be past stage 4 already, so if
-    stage 4 isn't seen within PICKUP_BUY_AFTER, the boss is bought anyway.
+  - The stage is read two ways: the Stage_4 picture, and the white digit in the circle (any
+    circle colour). Stage 4 or later on two looks in a row buys the boss - so a match picked
+    up already running (after a restart) buys only once it's really at stage 4+.
   - Anything unexpected goes back through navigate(), which reads the screen.
 """
+import os
 import time
+
+import cv2
+import numpy as np
 
 import config
 from vision import capture_screen, find_template
@@ -53,8 +58,16 @@ BUY_DY = 141
 BUY_REACH = 110        # wider than the button (169 px) - the area has to hold it whole
 # Bought, but no end screen this long after: buy again.
 BUY_RETRY_AFTER = 240.0
-# A match picked up mid-way: stage 4 not seen this long -> buy anyway.
-PICKUP_BUY_AFTER = 60.0
+# The stage number is read from the white digit in the stage circle, so the circle's colour
+# doesn't matter - Stage_4.png is the whole circle and stopped matching once the circle wasn't
+# the green it was captured in (live 2026-11-02: past stage 4 to 5 without buying). Digits
+# cut from live frames at the reference size; 2 and 4 score 0.00 against each other.
+STAGE_DIGITS_DIR = "assets/digits_stage"
+STAGE_DIGIT_MIN = 0.80          # a digit read below this counts as unreadable
+STAGE_READS_NEEDED = 2          # the same stage 4+ read this many looks in a row before buying
+STAGE_GLYPH_REACH = 40          # ref px around the circle's centre to look for the digit
+# No stage number read this long into a match: a screenshot is saved once, to fix the read.
+STAGE_UNREADABLE_AFTER = 90.0
 _REPEATS = (config.HALLOWEEN_REPEAT_STAGE_BTN, config.REPEAT_STAGE_BTN)
 _CLOSES = (config.HALLOWEEN_CLOSE_BTN, config.CLOSE_BTN)
 # After Buy: how long the Forge's close button gets to show.
@@ -83,6 +96,54 @@ def _find_near(shot, template, center, reach):
         return None
     m = find_template(area, template, config.MATCH_THRESHOLD)
     return (m[0] + x0 / s, m[1] + y0 / s, m[2]) if m else None
+
+
+_stage_digits = {}
+
+
+def _load_stage_digits():
+    """The stage circle's digits as {char: white mask}: its own captures, then the game font's."""
+    if _stage_digits:
+        return _stage_digits
+    from modules import digits
+    for ch, img in digits.load_digit_templates().items():
+        _stage_digits[ch] = cv2.threshold(img, 140, 255, cv2.THRESH_BINARY)[1]
+    if os.path.isdir(STAGE_DIGITS_DIR):
+        for name in os.listdir(STAGE_DIGITS_DIR):
+            ch = os.path.splitext(name)[0]
+            img = cv2.imread(os.path.join(STAGE_DIGITS_DIR, name), cv2.IMREAD_GRAYSCALE)
+            if len(ch) == 1 and ch.isdigit() and img is not None:
+                _stage_digits[ch] = img
+    return _stage_digits
+
+
+def read_stage(shot):
+    """
+    (stage digit or None, confidence) from the stage circle: its near-white pixels only
+    (white and grey-ish, any circle colour behind), the digit-sized blob nearest the centre.
+    """
+    from modules import digits
+    s = config.render_scale()
+    cx, cy, r = config.HALLOWEEN_STAGE_X * s, config.HALLOWEEN_STAGE_Y * s, STAGE_GLYPH_REACH * s
+    x0, y0 = max(0, int(cx - r)), max(0, int(cy - r))
+    area = shot[y0:int(cy + r), x0:int(cx + r)]
+    if area.size == 0:
+        return None, 0.0
+    lo, hi = area.min(axis=2).astype(int), area.max(axis=2).astype(int)
+    mask = (((lo > 200) & (hi - lo < 40)) * 255).astype(np.uint8)
+    n, _, stats, centres = cv2.connectedComponentsWithStats(mask)
+    best = None
+    for i in range(1, n):
+        x, y, w, h, a = stats[i]
+        if not (9 * s <= h <= 24 * s and 3 * s <= w <= 20 * s and a >= 25 * s * s):
+            continue
+        d = (centres[i][0] + x0 - cx) ** 2 + (centres[i][1] + y0 - cy) ** 2
+        if best is None or d < best[0]:
+            best = (d, mask[y:y + h, x:x + w])
+    if best is None:
+        return None, 0.0
+    ch, conf = digits.classify_glyph(best[1], _load_stage_digits())
+    return (ch, conf) if ch is not None and conf >= STAGE_DIGIT_MIN else (None, conf)
 
 
 def _halt(reason):
@@ -141,7 +202,6 @@ class HalloweenRunner:
         self.consecutive_defeats = 0
         self.resumed = False              # the next Start Game wait is for a stage never left (Repeat Stage)
         self._match_started_at = 0.0
-        self._picked_up = False           # the match was already running when the macro got to it
         self._last_result = None          # VICTORY / DEFEAT of the match that just ended, None = unknown
 
     def _phase(self, text, color="#4fc3f7"):
@@ -179,9 +239,11 @@ class HalloweenRunner:
             print(f"[{TAG}] On the stage, Start Game is up.")
             return True
         if _find(config.AUTOPLAY_ON_BTN, shot) or _find(config.AUTOPLAY_OFF_BTN, shot):
-            print(f"[{TAG}] A match is already running - picking it up from here.")
+            stage, _ = read_stage(shot)
+            print(f"[{TAG}] A match is already running (stage {stage or '?'}) - picking it up from here.")
+            if not ensure_autoplay_enabled():
+                print(f"[{TAG}] WARNING: couldn't find the Auto Play button - carrying on.")
             self._match_started_at = time.time()
-            self._picked_up = True
             return "IN_MATCH"
         path = health.save_debug_screenshot("halloween_unknown_screen", shot)
         print(f"[{TAG}] Not at the lobby or on the stage (screen saved: {path}) - going back to the lobby.")
@@ -207,7 +269,6 @@ class HalloweenRunner:
                 print(f"[{TAG}] Start Game wasn't there to click - the match has probably started already.")
         SESSION.match_started()
         self._match_started_at = time.time()
-        self._picked_up = False
         self._last_result = None
         return True
 
@@ -286,6 +347,10 @@ class HalloweenRunner:
         self._phase("WAITING FOR STAGE 4", "#4fc3f7")
         started = self._match_started_at or time.time()
         bought_at = [0.0]
+        reads = [0]                       # looks in a row at stage 4 or later
+        last_stage = [None]
+        last_read = [time.time()]
+        unreadable_saved = [False]
 
         def watch(shot):
             now = time.time()
@@ -300,19 +365,28 @@ class HalloweenRunner:
                     else:
                         bought_at[0] = now - BUY_RETRY_AFTER + 30.0    # try again in 30s
                 return None
-            at_stage_4 = _find_near(shot, config.HALLOWEEN_STAGE_4,
-                                    (config.HALLOWEEN_STAGE_X, config.HALLOWEEN_STAGE_Y), config.HALLOWEEN_STAGE_REACH)
-            late_pickup = self._picked_up and now - started >= PICKUP_BUY_AFTER
-            if at_stage_4 or late_pickup:
-                if at_stage_4:
-                    print(f"[{TAG}] Stage 4 reached (confidence={at_stage_4[2]:.2f}).")
-                else:
-                    print(f"[{TAG}] Picked up mid-match and stage 4 never showed - it's probably past it. "
-                          f"Buying the Final Boss now.")
+            stage, conf = read_stage(shot)
+            if stage is not None:
+                last_read[0] = now
+            if stage != last_stage[0] and stage is not None:
+                print(f"[{TAG}] Stage {stage} (read {conf:.2f}).")
+                last_stage[0] = stage
+            elif stage is None and not unreadable_saved[0] and now - last_read[0] >= STAGE_UNREADABLE_AFTER:
+                unreadable_saved[0] = True
+                path = health.save_debug_screenshot("halloween_stage_unreadable", shot)
+                print(f"[{TAG}] Can't read the stage number (screen saved: {path}) - still watching for the "
+                      f"Stage_4 picture too.")
+            picture = _find_near(shot, config.HALLOWEEN_STAGE_4,
+                                 (config.HALLOWEEN_STAGE_X, config.HALLOWEEN_STAGE_Y), config.HALLOWEEN_STAGE_REACH)
+            late = stage is not None and int(stage) >= 4
+            reads[0] = reads[0] + 1 if (late or picture) else 0
+            if reads[0] >= STAGE_READS_NEEDED:
+                print(f"[{TAG}] Stage {stage or 4} reached ("
+                      f"{'picture ' + format(picture[2], '.2f') if picture else 'digit ' + format(conf, '.2f')}) - "
+                      f"buying the Final Boss.")
+                reads[0] = 0
                 if self._buy_final_boss():
                     bought_at[0] = time.time()
-                elif config.STOP_REQUESTED:
-                    return None
             return None
 
         print(f"[{TAG}] Waiting for stage 4...")
