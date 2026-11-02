@@ -1883,14 +1883,14 @@ class BotEngine:
     def run_halloween(self):
         """
         Halloween Event (Events page, LIMITED): the event stage on Auto Play, the Final Boss
-        bought from the Forge at stage 4, Repeat Stage - the shared runner loop with
+        bought from the Forge at stage 6, Repeat Stage - the shared runner loop with
         modules/halloween.py's runner.
         """
         from modules.halloween import HalloweenRunner
         return self.run_monster_clash(
             "farm", None, _label="Halloween Event",
             _runner_factory=lambda sp: HalloweenRunner(set_phase=sp),
-            _intro="Halloween Event - the event stage on Auto Play; at stage 4 it buys the Final Boss from the Forge, "
+            _intro="Halloween Event - the event stage on Auto Play; at stage 6 it buys the Final Boss from the Forge, "
                    "then Repeat Stage (or carries on when the game's Auto Retry restarted it). Auto Start and Auto "
                    "Retry can be on or off.")
 

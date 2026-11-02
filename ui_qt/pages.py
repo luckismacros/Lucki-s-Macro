@@ -1502,7 +1502,7 @@ class OthersPage(ModePage):
 class EventsPage(ModePage):
     """
     Events - the limited-time events, each removed when its event ends:
-      Halloween - the Halloween Event: the Final Boss bought from the Forge at stage 4, Repeat
+      Halloween - the Halloween Event: the Final Boss bought from the Forge at stage 6, Repeat
                   Stage - modules/halloween.py.
     Sharkfang sat here in 3.7 only and is back on the Others page; settings saved here move
     back (see MainWindow._restore_ui_state and QueuePage.restore).
@@ -1527,7 +1527,7 @@ class EventsPage(ModePage):
         self.halloween_card.body.addWidget(label(
             "Works with the game's Auto Start and Auto Retry on or off - on is faster. The macro joins (Events › "
             "Halloween Event › Select Stage › Start) or picks up a match that's already running, keeps Auto Play on, and "
-            "at stage 4 opens the Forge and buys the Final Boss. After the match it clicks Repeat Stage, or just carries "
+            "at stage 6 opens the Forge and buys the Final Boss. After the match it clicks Repeat Stage, or just carries "
             "on if the game restarted the stage itself.", "hint", wrap=True))
         self.halloween_card.set_done(True)
 
@@ -1543,10 +1543,10 @@ class EventsPage(ModePage):
         return [("Units", "ok", "the game's Auto Play")]
 
     def run_spec(self):
-        return "run_halloween", (), [("Gamemode", "Halloween Event"), ("Boss", "Final Boss at stage 4")]
+        return "run_halloween", (), [("Gamemode", "Halloween Event"), ("Boss", "Final Boss at stage 6")]
 
     def summary(self):
-        return "Halloween Event - Final Boss at stage 4, Repeat Stage"
+        return "Halloween Event - Final Boss at stage 6, Repeat Stage"
 
     def state(self):
         return {"mode": self.mode.value()}

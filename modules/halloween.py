@@ -7,7 +7,7 @@ run_halloween() in engine.py and the Halloween option on the Events page.
 As described by the player (2026-11-01):
   Lobby -> Events -> Halloween Event -> (Event Gamemode) -> Select Stage -> Start -> Auto
   Play on -> Start Game. Once the stage counter at the top (the circle left of "Heat Bars")
-  shows 4: Forge -> scroll down a bit to the Final Boss card -> its Buy -> the Forge's
+  shows 6 (BOSS_STAGE - it was 4 until the game's patch of 2026-11-03): Forge -> scroll down a bit to the Final Boss card -> its Buy -> the Forge's
   Close (the same X as the other panels). The boss ends the
   run; on a win, Repeat Stage -> Auto Play checked -> Start Game, and again.
 
@@ -20,9 +20,13 @@ Fallbacks:
   - Forge clicked again while its panel doesn't open; a buy that failed is retried 10s later.
   - Works with the game's Auto Start / Auto Retry ON or OFF: with Auto Retry the stage counter
     dropping back (or the next match running) is the end of the match, nothing to click.
-  - The stage is read two ways: the Stage_4 picture, and the white digit in the circle (any
-    circle colour). Stage 4 or later on two looks in a row buys the boss - so a match picked
-    up already running (after a restart) buys only once it's really at stage 4+.
+  - The stage is read from the white digit in the circle (any circle colour). BOSS_STAGE or
+    later on two looks in a row buys the boss - so a match picked up already running (after a
+    restart) buys only once it's really there.
+  - Digits with no saved sample are learned during a match: the counter showing a glyph none
+    of the samples know, steady for a few looks and unlike the stage before it, is that stage
+    + 1 (4 -> 5 -> 6). Learned digits are saved next to the settings (stage_digits_learned/),
+    so the next run knows them from the start.
   - Start Game seen while a match is being watched gets pressed, so a match is never left
     unstarted; after Repeat Stage it's told apart from Auto Start straight away.
   - Anything unexpected goes back through navigate(), which reads the screen: a readable stage
@@ -76,10 +80,18 @@ AFTER_BUY_SHOT = 120.0
 # The stage number is read from the white digit in the stage circle, so the circle's colour
 # doesn't matter - Stage_4.png is the whole circle and stopped matching once the circle wasn't
 # the green it was captured in (live 2026-11-02: past stage 4 to 5 without buying). Digits
-# cut from live frames at the reference size; 2 and 4 score 0.00 against each other.
+# cut from live frames at the reference size; 2, 4 and 6 score 0.13 or less against each other.
 STAGE_DIGITS_DIR = "assets/digits_stage"
 STAGE_DIGIT_MIN = 0.80          # a digit read below this counts as unreadable
-STAGE_READS_NEEDED = 2          # the same stage 4+ read this many looks in a row before buying
+# The stage the Final Boss is bought at (the game moved it from 4 to 6 on 2026-11-03).
+BOSS_STAGE = 6
+STAGE_READS_NEEDED = 2          # BOSS_STAGE or later read this many looks in a row before buying
+# Learning digits that have no sample (see the module docstring).
+LEARNED_DIR_NAME = "stage_digits_learned"
+LEARNED_MIN = 0.90              # a learned digit has to match this well to count as read
+LEARN_LOOKS = 3                 # the unknown glyph steady this many looks in a row
+LEARN_SAME = 0.85               # "steady": each look this close to the first
+LEARN_UNLIKE = 0.70             # and below this against the stage before it (not the same digit)
 STAGE_GLYPH_REACH = 40          # ref px around the circle's centre to look for the digit
 # No stage number read this long into a match: a screenshot is saved once, to fix the read.
 STAGE_UNREADABLE_AFTER = 90.0
@@ -133,38 +145,51 @@ def _find_near(shot, template, center, reach):
     return (m[0] + x0 / s, m[1] + y0 / s, m[2]) if m else None
 
 
-_stage_digits = {}
+_generic_digits = {}       # the game font's digits from assets/digits (another size)
+_circle_digits = {}        # the stage circle's own samples (assets/digits_stage)
+_learned_digits = {}       # learned live (stage_digits_learned/ next to the settings)
+_learned_loaded = [False]
+
+
+def _learned_dir():
+    import settings
+    return os.path.join(settings.base_dir(), LEARNED_DIR_NAME)
 
 
 def _load_stage_digits():
-    """The stage circle's digits as {char: white mask}: its own captures, then the game font's."""
-    if _stage_digits:
-        return _stage_digits
-    from modules import digits
-    for ch, img in digits.load_digit_templates().items():
-        _stage_digits[ch] = cv2.threshold(img, 140, 255, cv2.THRESH_BINARY)[1]
-    if os.path.isdir(STAGE_DIGITS_DIR):
+    if not _generic_digits:
+        from modules import digits
+        for ch, img in digits.load_digit_templates().items():
+            _generic_digits[ch] = cv2.threshold(img, 140, 255, cv2.THRESH_BINARY)[1]
+    if not _circle_digits and os.path.isdir(STAGE_DIGITS_DIR):
         for name in os.listdir(STAGE_DIGITS_DIR):
             ch = os.path.splitext(name)[0]
             img = cv2.imread(os.path.join(STAGE_DIGITS_DIR, name), cv2.IMREAD_GRAYSCALE)
             if len(ch) == 1 and ch.isdigit() and img is not None:
-                _stage_digits[ch] = img
-    return _stage_digits
+                _circle_digits[ch] = img
+    if not _learned_loaded[0]:
+        _learned_loaded[0] = True
+        try:
+            folder = _learned_dir()
+            for name in (os.listdir(folder) if os.path.isdir(folder) else []):
+                ch = os.path.splitext(name)[0]
+                img = cv2.imread(os.path.join(folder, name), cv2.IMREAD_GRAYSCALE)
+                if len(ch) == 1 and ch.isdigit() and ch not in _circle_digits and img is not None:
+                    _learned_digits[ch] = img
+        except OSError:
+            pass
 
 
-def read_stage(shot):
-    """
-    (stage number as text or None, confidence) from the stage circle: its near-white pixels
-    only (any circle colour behind), the digit-sized blob nearest the centre - and the one
-    beside it for stage 10+.
-    """
-    from modules import digits
+def _stage_glyphs(shot):
+    """The stage circle's digit masks, left to right ([] if none): its near-white pixels only
+    (any circle colour behind), the digit-sized blob nearest the centre - and the one beside it
+    for stage 10+."""
     s = config.render_scale()
     cx, cy, r = config.HALLOWEEN_STAGE_X * s, config.HALLOWEEN_STAGE_Y * s, STAGE_GLYPH_REACH * s
     x0, y0 = max(0, int(cx - r)), max(0, int(cy - r))
     area = shot[y0:int(cy + r), x0:int(cx + r)]
     if area.size == 0:
-        return None, 0.0
+        return []
     lo, hi = area.min(axis=2).astype(int), area.max(axis=2).astype(int)
     mask = (((lo > 200) & (hi - lo < 40)) * 255).astype(np.uint8)
     n, _, stats, centres = cv2.connectedComponentsWithStats(mask)
@@ -176,19 +201,86 @@ def read_stage(shot):
         d = (centres[i][0] + x0 - cx) ** 2 + (centres[i][1] + y0 - cy) ** 2
         blobs.append((d, centres[i], mask[y:y + h, x:x + w]))
     if not blobs:
-        return None, 0.0
+        return []
     blobs.sort(key=lambda b: b[0])
     near = blobs[0]
-    # Stage 10+: two digits side by side. Each is read, left to right.
     pair = [b for b in blobs[1:] if abs(b[1][0] - near[1][0]) <= 16 * s and abs(b[1][1] - near[1][1]) <= 4 * s]
-    glyphs = sorted([near] + pair[:1], key=lambda b: b[1][0])
+    return [g for _, _, g in sorted([near] + pair[:1], key=lambda b: b[1][0])]
+
+
+def _classify(glyph):
+    """(digit, conf) or (None, best conf): the samples at STAGE_DIGIT_MIN, learned ones at LEARNED_MIN."""
+    from modules import digits
+    _load_stage_digits()
+    ch, conf = digits.classify_glyph(glyph, {**_generic_digits, **_circle_digits})
+    if ch is None or conf < STAGE_DIGIT_MIN:
+        ch = None
+    if _learned_digits:
+        lch, lconf = digits.classify_glyph(glyph, _learned_digits)
+        if lconf >= LEARNED_MIN and (ch is None or lconf > conf):
+            return lch, lconf
+    return (ch, conf) if ch is not None else (None, conf)
+
+
+def read_stage(shot):
+    """(stage number as text or None, confidence) from the stage circle."""
+    glyphs = _stage_glyphs(shot)
+    if not glyphs:
+        return None, 0.0
     out, worst = "", 1.0
-    for _, _, glyph in glyphs:
-        ch, conf = digits.classify_glyph(glyph, _load_stage_digits())
-        if ch is None or conf < STAGE_DIGIT_MIN:
+    for glyph in glyphs:
+        ch, conf = _classify(glyph)
+        if ch is None:
             return None, conf
         out, worst = out + ch, min(worst, conf)
     return out, worst
+
+
+class StageLearner:
+    """
+    Learns the circle's digits that have no sample: after stage N is read, a glyph nothing
+    knows - steady for LEARN_LOOKS looks, and unlike N's own - is stage N + 1.
+    """
+
+    def __init__(self):
+        self.last = None             # the last stage read (single digit)
+        self.last_glyph = None
+        self.cand = None
+        self.looks = 0
+
+    def look(self, shot, n):
+        from modules import digits
+        glyphs = _stage_glyphs(shot)
+        if n is not None:
+            self.cand, self.looks = None, 0
+            if len(glyphs) == 1:
+                self.last, self.last_glyph = n, glyphs[0]
+            return None
+        if self.last is None or self.last >= 9 or len(glyphs) != 1:
+            return None
+        nxt = str(self.last + 1)
+        if nxt in _circle_digits or nxt in _learned_digits:
+            return None                # a known digit just didn't read this time
+        g = glyphs[0]
+        if self.last_glyph is not None and digits.classify_glyph(g, {"x": self.last_glyph})[1] >= LEARN_UNLIKE:
+            self.cand, self.looks = None, 0
+            return None                # still stage N, drawn a little differently
+        if self.cand is not None and digits.classify_glyph(g, {"x": self.cand})[1] >= LEARN_SAME:
+            self.looks += 1
+        else:
+            self.cand, self.looks = g, 1
+        if self.looks < LEARN_LOOKS:
+            return None
+        _learned_digits[nxt] = self.cand
+        try:
+            os.makedirs(_learned_dir(), exist_ok=True)
+            cv2.imwrite(os.path.join(_learned_dir(), f"{nxt}.png"), self.cand)
+        except (OSError, cv2.error):
+            pass
+        print(f"[{TAG}] Learned what the stage counter's {nxt} looks like (after {self.last}).")
+        self.last, self.last_glyph = int(nxt), self.cand
+        self.cand, self.looks = None, 0
+        return int(nxt)
 
 
 def _halt(reason):
@@ -433,15 +525,18 @@ class HalloweenRunner:
     # --- the match ------------------------------------------------------------------------
     def play_match(self):
         """
-        Buys the Final Boss at stage 4, then waits for the end - the end screen, or (the game's
+        Buys the Final Boss at BOSS_STAGE, then waits for the end - the end screen, or (the game's
         Auto Retry on) the stage starting over. "ENDED" / False / "RECONNECTED".
         """
-        self._phase("WAITING FOR STAGE 4", "#4fc3f7")
+        self._phase(f"WAITING FOR STAGE {BOSS_STAGE}", "#4fc3f7")
+        if getattr(self, "_learner", None) is None:
+            self._learner = StageLearner()
+        learner = self._learner
         started = self._match_started_at or time.time()
         bought_at = [0.0]
         bought_stage = [None]
         next_try = [0.0]
-        reads = [0]                       # looks in a row at stage 4 or later
+        reads = [0]                       # looks at BOSS_STAGE or later
         up_looks = [0]                    # looks in a row above the stage the boss was bought at
         down_looks = [0]                  # looks in a row below the highest stage this match
         highest = [0]
@@ -489,6 +584,9 @@ class HalloweenRunner:
                 return None
             stage, conf = read_stage(shot)
             n = int(stage) if stage is not None else None
+            learned = learner.look(shot, n)
+            if learned is not None:
+                n, conf = learned, LEARNED_MIN
             if n is not None:
                 last_read[0] = now
                 if n != last_stage[0]:
@@ -506,7 +604,7 @@ class HalloweenRunner:
                 unreadable_saved[0] = True
                 path = health.save_debug_screenshot("halloween_stage_unreadable", shot)
                 print(f"[{TAG}] Can't read the stage number (screen saved: {path}) - still watching for the "
-                      f"Stage_4 picture too.")
+                      f"Stage_6 picture too.")
 
             if bought_at[0]:
                 # Back below the stage it was bought at: that match ended and the next one is
@@ -537,22 +635,23 @@ class HalloweenRunner:
 
             if now < next_try[0]:
                 return None
-            picture = _find_near(shot, config.HALLOWEEN_STAGE_4,
+            # The Stage_6 picture too (the whole circle - only while it's the colour it was cut in).
+            picture = _find_near(shot, config.HALLOWEEN_STAGE_6,
                                  (config.HALLOWEEN_STAGE_X, config.HALLOWEEN_STAGE_Y), config.HALLOWEEN_STAGE_REACH)
             # An unreadable look (a popup over the counter, an effect) neither counts nor resets.
-            if (n is not None and n >= 4) or picture:
+            if (n is not None and n >= BOSS_STAGE) or picture:
                 reads[0] += 1
             elif n is not None:
                 reads[0] = 0
             if reads[0] >= STAGE_READS_NEEDED:
-                print(f"[{TAG}] Stage {n or 4} reached ("
+                print(f"[{TAG}] Stage {n or BOSS_STAGE} reached ("
                       f"{'picture ' + format(picture[2], '.2f') if picture else 'digit ' + format(conf, '.2f')}) - "
                       f"buying the Final Boss.")
                 reads[0] = 0
-                buy(n if n is not None else 4)
+                buy(n if n is not None else BOSS_STAGE)
             return None
 
-        print(f"[{TAG}] Waiting for stage 4...")
+        print(f"[{TAG}] Waiting for stage {BOSS_STAGE}...")
         result = poll_until([target(config.VICTORY_TEXT, "VICTORY", debug_label="victory"),
                              target(config.DEFEAT_TEXT, "DEFEAT", debug_label="defeat")],
                             interval=1.0, label="halloween_match", stuck_timeout=self._stuck_timeout(),
