@@ -23,7 +23,11 @@ Fallbacks:
   - The stage is read two ways: the Stage_4 picture, and the white digit in the circle (any
     circle colour). Stage 4 or later on two looks in a row buys the boss - so a match picked
     up already running (after a restart) buys only once it's really at stage 4+.
-  - Anything unexpected goes back through navigate(), which reads the screen.
+  - Start Game seen while a match is being watched gets pressed, so a match is never left
+    unstarted; after Repeat Stage it's told apart from Auto Start straight away.
+  - Anything unexpected goes back through navigate(), which reads the screen: a readable stage
+    counter means a match is running; a panel over the screen is closed and it looks again;
+    only then does it go back to the lobby.
 """
 import os
 import time
@@ -59,8 +63,10 @@ FORGE_HOVER = (800, 450)
 # The Buy button's centre below the Final Boss card's top crop (reference px).
 BUY_DY = 141
 BUY_REACH = 110        # wider than the button (169 px) - the area has to hold it whole
-# Bought, but no end screen this long after: buy again.
-BUY_RETRY_AFTER = 240.0
+# Bought, but no end screen this long after: buy again. Only the last resort - the stage
+# going up after a buy (STAGE_UP_LOOKS) catches a buy that didn't take far sooner, and this
+# must not fire during a long boss fight (a second buy costs candy for nothing).
+BUY_RETRY_AFTER = 480.0
 # The stage number is read from the white digit in the stage circle, so the circle's colour
 # doesn't matter - Stage_4.png is the whole circle and stopped matching once the circle wasn't
 # the green it was captured in (live 2026-11-02: past stage 4 to 5 without buying). Digits
@@ -82,7 +88,17 @@ BUY_FAIL_COOLDOWN = 10.0
 # Clicks on Forge before giving up on it opening.
 FORGE_OPEN_TRIES = 3
 _REPEATS = (config.HALLOWEEN_REPEAT_STAGE_BTN, config.REPEAT_STAGE_BTN)
-_CLOSES = (config.HALLOWEEN_CLOSE_BTN, config.CLOSE_BTN)
+_CLOSES = (config.HALLOWEEN_CLOSE_BTN, config.CLOSE_BTN, config.SETTINGS_CLOSE_BTN)
+# After Repeat Stage: how long to tell "Start Game is up" (Auto Start off) from "the match
+# already started" (Auto Start on). The shared Start Game wait takes 45s to believe the latter
+# (START_GAME_LINGER_GRACE) on a stage that never went away, which a repeat is.
+AFTER_REPEAT_WAIT = 20.0
+# While watching a match: Start Game up this many looks in a row gets pressed (at most every
+# START_PRESS_EVERY seconds) - a match is never left sitting unstarted, whatever Auto Start is.
+START_UP_LOOKS = 2
+START_PRESS_EVERY = 5.0
+# A screen nothing matched: this long for something known to show (loading) before leaving.
+UNKNOWN_SCREEN_WAIT = 10.0
 # After Buy: how long the Forge's close button gets to show.
 FORGE_CLOSE_WAIT = 3.0
 
@@ -264,17 +280,38 @@ class HalloweenRunner:
             print(f"[{TAG}] On the stage, Start Game is up.")
             return True
         if _find(config.AUTOPLAY_ON_BTN, shot) or _find(config.AUTOPLAY_OFF_BTN, shot):
-            stage, _ = read_stage(shot)
-            print(f"[{TAG}] A match is already running (stage {stage or '?'}) - picking it up from here.")
-            if not ensure_autoplay_enabled():
-                print(f"[{TAG}] WARNING: couldn't find the Auto Play button - carrying on.")
-            self._match_started_at = time.time()
-            return "IN_MATCH"
+            return self._pick_up(shot)
+        if read_stage(shot)[0] is not None:
+            # The stage counter is up, so a match is running - the Auto Play button is just
+            # hidden (a panel over it).
+            return self._pick_up(shot)
+        if not getattr(self, "_looked_again", False):
+            template, close = _find_any(_CLOSES, shot)
+            if close:
+                print(f"[{TAG}] A panel is open over the screen - closing it and looking again.")
+                click_until_gone(template, close, "halloween_close_panel")
+            else:
+                print(f"[{TAG}] Nothing recognisable on screen - giving it a moment (loading?)...")
+                time.sleep(UNKNOWN_SCREEN_WAIT)
+            self._looked_again = True
+            try:
+                return self.navigate()
+            finally:
+                self._looked_again = False
         path = health.save_debug_screenshot("halloween_unknown_screen", shot)
         print(f"[{TAG}] Not at the lobby or on the stage (screen saved: {path}) - going back to the lobby.")
         if not return_to_lobby(timeout=120.0):
             return False
         return self._join()
+
+    def _pick_up(self, shot):
+        """A match already running: Auto Play checked, then watched from here."""
+        stage, _ = read_stage(shot)
+        print(f"[{TAG}] A match is already running (stage {stage or '?'}) - picking it up from here.")
+        if not ensure_autoplay_enabled():
+            print(f"[{TAG}] WARNING: couldn't find the Auto Play button - carrying on.")
+        self._match_started_at = time.time()
+        return "IN_MATCH"
 
     # --- before the match -----------------------------------------------------------------
     def prepare_and_start(self):
@@ -405,6 +442,8 @@ class HalloweenRunner:
         last_stage = [None]
         last_read = [time.time()]
         unreadable_saved = [False]
+        start_looks = [0]
+        last_start_press = [0.0]
 
         def buy(stage_now):
             if self._buy_final_boss():
@@ -418,6 +457,14 @@ class HalloweenRunner:
             now = time.time()
             if now - started >= MIN_MATCH and _find_any(_REPEATS, shot)[0]:
                 return "SCREEN"
+            # Start Game waiting to be pressed (Auto Start off, and the match was taken for
+            # running): press it, or the stage sits at 1 forever.
+            start_looks[0] = start_looks[0] + 1 if _find(config.START_GAME_BTN, shot) else 0
+            if start_looks[0] >= START_UP_LOOKS and now - last_start_press[0] >= START_PRESS_EVERY:
+                last_start_press[0] = now
+                print(f"[{TAG}] Start Game is waiting to be pressed - pressing it.")
+                click_start_game()
+                return None
             stage, conf = read_stage(shot)
             n = int(stage) if stage is not None else None
             if n is not None:
@@ -577,6 +624,32 @@ class HalloweenRunner:
                 path = health.save_debug_screenshot("halloween_repeat_stuck")
                 print(f"[{TAG}] Repeat Stage is still up after clicking (screen saved: {path}).")
                 return "LOST"
+        return self._after_repeat(end_stage)
+
+    def _after_repeat(self, end_stage):
+        """
+        Right after Repeat Stage: Start Game up (Auto Start off) -> "START"; the stage counter
+        back below where the match ended with no Start Game (Auto Start on) -> "IN_MATCH".
+        Neither within AFTER_REPEAT_WAIT -> "START" (the shared Start Game wait sorts it out).
+        """
+        looks = [0]
+
+        def started(shot):
+            if _find_any(_REPEATS, shot)[0]:
+                looks[0] = 0
+                return None
+            stage, _ = read_stage(shot)
+            low = stage is not None and (end_stage is None or int(stage) < end_stage)
+            looks[0] = looks[0] + 1 if low else 0
+            return "RUNNING" if looks[0] >= STAGE_DOWN_LOOKS else None
+
+        result = poll_until([target(config.START_GAME_BTN, "START")], interval=1.0, label="halloween_after_repeat",
+                            timeout=AFTER_REPEAT_WAIT, stuck_timeout=None, custom_check=started, lobby_grace=25.0)
+        if result in (False, "RECONNECTED"):
+            return result
+        if result == "RUNNING":
+            print(f"[{TAG}] The match started by itself (Auto Start).")
+            return self._next_already_running()
         self.resumed = True
         return "START"
 
