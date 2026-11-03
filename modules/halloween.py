@@ -15,8 +15,10 @@ Fallbacks:
   - The Final Boss's Buy is only looked for under the Final Boss card's own top: every card
     in the Forge has the same "Buy 500" button.
   - The card not in view after Forge: scrolled down a little at a time, then back up.
-  - Bought, but the stage counter keeps going up (the boss would have ended the run): Forge ->
-    Buy again at once. No end screen BUY_RETRY_AFTER after a buy: the same.
+  - The boss is bought ONCE per match. Since the stage-6 patch (2026-11-03) the stages keep
+    going after the buy and the match can run a long time, so neither the stage going up nor
+    a long wait means the buy failed - re-buying only threw candy away (live 2026-11-03: it
+    kept buying until the candy ran out).
   - Forge clicked again while its panel doesn't open; a buy that failed is retried 10s later.
   - Works with the game's Auto Start / Auto Retry ON or OFF: with Auto Retry the stage counter
     dropping back (or the next match running) is the end of the match, nothing to click.
@@ -67,16 +69,11 @@ FORGE_HOVER = (800, 450)
 # The Buy button's centre below the Final Boss card's top crop (reference px).
 BUY_DY = 141
 BUY_REACH = 110        # wider than the button (169 px) - the area has to hold it whole
-# Bought, but no end screen this long after: buy again. The last resort - the stage going up
-# (STAGE_UP_LOOKS) or starting over (STAGE_LOWER_AFTER_BUY) catches it far sooner. A boss
-# fight took ~35s in the logs, so 5 minutes is well past any real one.
-BUY_RETRY_AFTER = 300.0
 # Bought, then the stage read lower than the stage bought at this many times (not necessarily
 # in a row - unreadable looks in between don't matter): that match is over and the next one
-# is running (the end screen was missed). Counted from the buy, never reset.
+# is running (the end screen was missed). Counted from the buy; a read at or above the bought
+# stage starts the count over, so stray misreads over a long match never add up.
 STAGE_LOWER_AFTER_BUY = 3
-# Bought, no end yet this long after: one screenshot of what's on screen, to see why.
-AFTER_BUY_SHOT = 120.0
 # The stage number is read from the white digit in the stage circle, so the circle's colour
 # doesn't matter - Stage_4.png is the whole circle and stopped matching once the circle wasn't
 # the green it was captured in (live 2026-11-02: past stage 4 to 5 without buying). Digits
@@ -95,9 +92,6 @@ LEARN_UNLIKE = 0.70             # and below this against the stage before it (no
 STAGE_GLYPH_REACH = 40          # ref px around the circle's centre to look for the digit
 # No stage number read this long into a match: a screenshot is saved once, to fix the read.
 STAGE_UNREADABLE_AFTER = 90.0
-# The stage read higher than the one the boss was bought at, this many looks in a row: the buy
-# didn't take (the boss would have ended the run) - buy again straight away.
-STAGE_UP_LOOKS = 2
 # The stage read lower than the highest seen this match, this many looks in a row: the game
 # started the stage over by itself (Auto Retry) - the match is over.
 STAGE_DOWN_LOOKS = 3
@@ -537,7 +531,6 @@ class HalloweenRunner:
         bought_stage = [None]
         next_try = [0.0]
         reads = [0]                       # looks at BOSS_STAGE or later
-        up_looks = [0]                    # looks in a row above the stage the boss was bought at
         down_looks = [0]                  # looks in a row below the highest stage this match
         highest = [0]
         prev_n = [None]
@@ -546,17 +539,14 @@ class HalloweenRunner:
         unreadable_saved = [False]
         start_looks = [0]
         last_start_press = [0.0]
-        lower_after_buy = [0]             # reads below the bought stage since the buy (never reset)
-        after_buy_saved = [False]
+        lower_after_buy = [0]             # reads below the bought stage since the last read at/above it
 
         def buy(stage_now):
             if self._buy_final_boss():
                 bought_at[0] = time.time()
                 bought_stage[0] = stage_now
                 highest[0] = max(highest[0], stage_now or 0)
-                up_looks[0] = 0
                 lower_after_buy[0] = 0
-                after_buy_saved[0] = False
             else:
                 next_try[0] = time.time() + BUY_FAIL_COOLDOWN
 
@@ -609,28 +599,13 @@ class HalloweenRunner:
             if bought_at[0]:
                 # Back below the stage it was bought at: that match ended and the next one is
                 # running (its end screen was missed) - watch the new one from the start.
-                if n is not None and bought_stage[0] is not None and n < bought_stage[0]:
-                    lower_after_buy[0] += 1
+                if n is not None and bought_stage[0] is not None:
+                    lower_after_buy[0] = lower_after_buy[0] + 1 if n < bought_stage[0] else 0
                     if lower_after_buy[0] >= STAGE_LOWER_AFTER_BUY:
                         print(f"[{TAG}] Stage {n} after buying the Final Boss at stage {bought_stage[0]} - "
                               f"that match is over and the next one is running.")
                         return "RESTARTED"
-                if not after_buy_saved[0] and now - bought_at[0] >= AFTER_BUY_SHOT:
-                    after_buy_saved[0] = True
-                    path = health.save_debug_screenshot("halloween_long_after_buy", shot)
-                    print(f"[{TAG}] No end screen {AFTER_BUY_SHOT:.0f}s after buying the Final Boss (stage read: "
-                          f"{n if n is not None else '?'}; screen saved: {path}) - still watching.")
-                # Still going up after the buy: the boss never came - buy again now.
-                if n is not None:
-                    up_looks[0] = up_looks[0] + 1 if bought_stage[0] is not None and n > bought_stage[0] else 0
-                if up_looks[0] >= STAGE_UP_LOOKS:
-                    print(f"[{TAG}] Stage {n} after buying the Final Boss at stage {bought_stage[0]} - the buy didn't "
-                          f"take. Buying it again.")
-                    buy(n)
-                elif now - bought_at[0] >= BUY_RETRY_AFTER:
-                    print(f"[{TAG}] No end screen {BUY_RETRY_AFTER / 60:.0f} min after buying the Final Boss - "
-                          f"buying it again.")
-                    buy(n if n is not None else bought_stage[0])
+                # Bought once - never again this match (the stages carry on after the buy).
                 return None
 
             if now < next_try[0]:
