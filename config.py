@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "3.7.4"
+APP_VERSION = "3.7.5"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -1678,10 +1678,10 @@ HALLOWEEN_EVENT_GAMEMODE_BTN = f"{HALLOWEEN_DIR}/Event_Gamemode.png"
 HALLOWEEN_SELECT_STAGE_BTN = f"{HALLOWEEN_DIR}/Select_Stage.png"
 HALLOWEEN_START_BTN = f"{HALLOWEEN_DIR}/Start_Stage.png"            # the party screen's Start
 HALLOWEEN_REPEAT_STAGE_BTN = f"{HALLOWEEN_DIR}/Repeat_Stage.png"
-# The stage counter at the top (the circle left of "Heat Bars"): its look at stage 6, the boss
-# stage since the game's patch of 2026-11-03 (a backup - the digit in it is what's read). The
+# The stage counter at the top (the circle left of "Heat Bars"): its look at the boss stage
+# (halloween.BOSS_STAGE, 5 since 2026-11-04) - a backup, the digit in it is what's read. The
 # circle changes colour with the stage.
-HALLOWEEN_STAGE_6 = f"{HALLOWEEN_DIR}/Stage_6.png"
+HALLOWEEN_BOSS_STAGE_PIC = f"{HALLOWEEN_DIR}/Stage_5.png"
 HALLOWEEN_STAGE_X, HALLOWEEN_STAGE_Y = 571, 89                     # where that circle sits (reference px)
 HALLOWEEN_STAGE_REACH = 70                                         # how far around it to look
 HALLOWEEN_FORGE_BTN = f"{HALLOWEEN_DIR}/Forge.png"                  # bottom middle, above the money
@@ -1701,5 +1701,5 @@ for _path in (HALLOWEEN_EVENTS_BTN, HALLOWEEN_EVENT_CARD, HALLOWEEN_EVENT_GAMEMO
 TEMPLATE_THRESHOLDS.update({
     HALLOWEEN_EVENT_CARD: 0.80,
     HALLOWEEN_START_BTN: 0.85,                # the green buttons look alike - see MONSTER_CLASH_START_BTN
-    HALLOWEEN_STAGE_6: 0.80,
+    HALLOWEEN_BOSS_STAGE_PIC: 0.80,
 })

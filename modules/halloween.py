@@ -7,15 +7,15 @@ run_halloween() in engine.py and the Halloween option on the Events page.
 As described by the player (2026-11-01):
   Lobby -> Events -> Halloween Event -> (Event Gamemode) -> Select Stage -> Start -> Auto
   Play on -> Start Game. Once the stage counter at the top (the circle left of "Heat Bars")
-  shows 6 (BOSS_STAGE - it was 4 until the game's patch of 2026-11-03): Forge -> scroll down a bit to the Final Boss card -> its Buy -> the Forge's
-  Close (the same X as the other panels). The boss ends the
-  run; on a win, Repeat Stage -> Auto Play checked -> Start Game, and again.
+  shows BOSS_STAGE (5 since 2026-11-04; the game had it at 4, then 6 on 2026-11-03): Forge ->
+  scroll down a bit to the Final Boss card -> its Buy -> the Forge's Close (the same X as the
+  other panels). The boss ends the run; on a win, Repeat Stage -> Auto Play checked -> Start Game, and again.
 
 Fallbacks:
   - The Final Boss's Buy is only looked for under the Final Boss card's own top: every card
     in the Forge has the same "Buy 500" button.
   - The card not in view after Forge: scrolled down a little at a time, then back up.
-  - The boss is bought ONCE per match. Since the stage-6 patch (2026-11-03) the stages keep
+  - The boss is bought ONCE per match. Since the 2026-11-03 patch the stages keep
     going after the buy and the match can run a long time, so neither the stage going up nor
     a long wait means the buy failed - re-buying only threw candy away (live 2026-11-03: it
     kept buying until the candy ran out).
@@ -27,7 +27,7 @@ Fallbacks:
     restart) buys only once it's really there.
   - Digits with no saved sample are learned during a match: the counter showing a glyph none
     of the samples know, steady for a few looks and unlike the stage before it, is that stage
-    + 1 (4 -> 5 -> 6). Learned digits are saved next to the settings (stage_digits_learned/),
+    + 1 (6 -> 7 -> 8). Learned digits are saved next to the settings (stage_digits_learned/),
     so the next run knows them from the start.
   - Start Game seen while a match is being watched gets pressed, so a match is never left
     unstarted; after Repeat Stage it's told apart from Auto Start straight away.
@@ -80,8 +80,9 @@ STAGE_LOWER_AFTER_BUY = 3
 # cut from live frames at the reference size; 2, 4 and 6 score 0.13 or less against each other.
 STAGE_DIGITS_DIR = "assets/digits_stage"
 STAGE_DIGIT_MIN = 0.80          # a digit read below this counts as unreadable
-# The stage the Final Boss is bought at (the game moved it from 4 to 6 on 2026-11-03).
-BOSS_STAGE = 6
+# The stage the Final Boss is bought at: 4 at launch, 6 on 2026-11-03, 5 since 2026-11-04. If the
+# game moves it again: change this, and config.HALLOWEEN_BOSS_STAGE_PIC to that stage's capture.
+BOSS_STAGE = 5
 STAGE_READS_NEEDED = 2          # BOSS_STAGE or later read this many looks in a row before buying
 # Learning digits that have no sample (see the module docstring).
 LEARNED_DIR_NAME = "stage_digits_learned"
@@ -594,7 +595,7 @@ class HalloweenRunner:
                 unreadable_saved[0] = True
                 path = health.save_debug_screenshot("halloween_stage_unreadable", shot)
                 print(f"[{TAG}] Can't read the stage number (screen saved: {path}) - still watching for the "
-                      f"Stage_6 picture too.")
+                      f"Stage_{BOSS_STAGE} picture too.")
 
             if bought_at[0]:
                 # Back below the stage it was bought at: that match ended and the next one is
@@ -610,8 +611,8 @@ class HalloweenRunner:
 
             if now < next_try[0]:
                 return None
-            # The Stage_6 picture too (the whole circle - only while it's the colour it was cut in).
-            picture = _find_near(shot, config.HALLOWEEN_STAGE_6,
+            # The boss stage's picture too (the whole circle - only while it's the colour it was cut in).
+            picture = _find_near(shot, config.HALLOWEEN_BOSS_STAGE_PIC,
                                  (config.HALLOWEEN_STAGE_X, config.HALLOWEEN_STAGE_Y), config.HALLOWEEN_STAGE_REACH)
             # An unreadable look (a popup over the counter, an effect) neither counts nor resets.
             if (n is not None and n >= BOSS_STAGE) or picture:
