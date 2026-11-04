@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "3.7.5"
+APP_VERSION = "3.8"
 
 # Flow Control
 STOP_REQUESTED = False
@@ -1691,12 +1691,15 @@ HALLOWEEN_FINAL_BOSS_CARD = f"{HALLOWEEN_DIR}/Final_Boss_Card.png"
 HALLOWEEN_FINAL_BOSS_TITLE = f"{HALLOWEEN_DIR}/Final_Boss_Title.png"
 # "Buy 500" - every card has one, so it's only ever looked for below the Final Boss card's top.
 HALLOWEEN_BUY_BTN = f"{HALLOWEEN_DIR}/Buy_Card.png"
+# The same Buy before the boss can be bought (grey until stage 5). Shape-wise the two match each
+# other (0.79), so green vs grey is told by colour (halloween._buy_is_green), not by template.
+HALLOWEEN_GREY_BUY_BTN = f"{HALLOWEEN_DIR}/Grey_Buy_Card.png"
 # The Forge's X, closed after buying - the same X as Sho's panels (its crop is reused).
 HALLOWEEN_CLOSE_BTN = SHO_CLOSE_BTN
 
 for _path in (HALLOWEEN_EVENTS_BTN, HALLOWEEN_EVENT_CARD, HALLOWEEN_EVENT_GAMEMODE_BTN, HALLOWEEN_SELECT_STAGE_BTN,
               HALLOWEEN_REPEAT_STAGE_BTN, HALLOWEEN_FORGE_BTN, HALLOWEEN_FINAL_BOSS_CARD,
-              HALLOWEEN_FINAL_BOSS_TITLE, HALLOWEEN_BUY_BTN):
+              HALLOWEEN_FINAL_BOSS_TITLE, HALLOWEEN_BUY_BTN, HALLOWEEN_GREY_BUY_BTN):
     TEMPLATE_THRESHOLDS.setdefault(_path, 0.75)   # rescaled crops, as Sho's and Sharkfang's
 TEMPLATE_THRESHOLDS.update({
     HALLOWEEN_EVENT_CARD: 0.80,

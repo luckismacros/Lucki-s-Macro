@@ -64,6 +64,7 @@ class Bridge(QObject):
     call = Signal(object)
     f7 = Signal()
     autoclicker = Signal()
+    pause_state = Signal(bool)
 
 
 # ----------------------------------------------------------------------------- game area
@@ -185,6 +186,7 @@ class MainWindow(QMainWindow):
         self.bridge.call.connect(lambda fn: fn())
         self.bridge.f7.connect(self.toggle_run)
         self.bridge.autoclicker.connect(self.toggle_autoclicker)
+        self.bridge.pause_state.connect(self._on_pause_state)
 
         # Autoclicker's position/interval persist across launches; "enabled" never
         # restores true on its own - see settings.py's own comment on autoclicker_pos.
@@ -341,7 +343,17 @@ class MainWindow(QMainWindow):
         self.start_btn = Button("Start", "success", icon="play", key_hint="F7", height=50, font_px=15)
         self.start_btn.setToolTip("F7 starts and stops it from anywhere - even while you're clicked into Roblox")
         self.start_btn.clicked.connect(self.toggle_run)
-        col.addWidget(self.start_btn)
+        # Pause / Resume - only while a run is going (see BotEngine.pause).
+        self.pause_btn = Button("Pause", "ghost", icon="pause", height=50, font_px=15)
+        self.pause_btn.setToolTip("Holds the run without ending it: release Roblox, fix something, dock it again, "
+                                  "then Resume - it carries on from wherever the game is")
+        self.pause_btn.clicked.connect(self.toggle_pause)
+        self.pause_btn.hide()
+        run_row = QHBoxLayout()
+        run_row.setSpacing(8)
+        run_row.addWidget(self.start_btn, 3)
+        run_row.addWidget(self.pause_btn, 2)
+        col.addLayout(run_row)
 
         foot = QHBoxLayout()
         foot.setSpacing(2)
@@ -722,8 +734,12 @@ class MainWindow(QMainWindow):
             self.log(f"Roblox docked at {client[0]}x{client[1]}.")
 
     def release_roblox(self):
-        if self.engine.running:
-            self.toast("Stop the run first", "Roblox can't be released while the bot is using it.", "warning")
+        if self.engine.running and not self.engine.pause_reached:
+            if self.engine.paused:
+                self.toast("Still pausing", "Wait a moment - the current step is finishing.", "warning")
+            else:
+                self.toast("Pause or stop the run first", "Roblox can't be released while the bot is using it.",
+                           "warning")
             return
         restored = docking.undock(self._hwnd(), self.dock_state)
         self.dock_state.released = True
@@ -1279,7 +1295,57 @@ class MainWindow(QMainWindow):
         self.start_btn.setEnabled(False)
         self._on_phase_display("Stopping", "Finishing the current step safely - buttons and keys are released first.", "wait")
 
+    # ------------------------------------------------------------------ pause
+
+    def toggle_pause(self):
+        if not self.engine.running or self.engine.user_stop_requested:
+            return
+        if self.engine.paused:
+            if not self.engine.pause_reached:
+                return                       # still winding down - Resume is offered once it's paused
+            # Released or undocked while paused: back into its slot before the bot looks at it.
+            if not self.dock_state.docked or self.dock_state.released:
+                if not roblox_is_running():
+                    self.toast("Roblox isn't open", "Open Roblox and join the game, then press Resume.", "warning")
+                    return
+                self.dock_again()
+                if not self.dock_state.docked:
+                    self.toast("Couldn't dock Roblox", "Dock it with the button in the game area, then press Resume.",
+                               "warning")
+                    return
+            self.engine.resume()
+            self.pause_btn.setEnabled(False)
+            self.pause_btn.setText("Resuming…")
+            return
+        if self.engine.pause():
+            self.pause_btn.setEnabled(False)
+            self.pause_btn.setText("Pausing…")
+            self._on_phase_display("Pausing", "Finishing the current step safely - buttons and keys are released "
+                                   "first.", "wait")
+
+    def on_pause_state(self, paused):
+        """Engine thread -> UI: the run is now paused (True) or carrying on again (False)."""
+        self.bridge.pause_state.emit(bool(paused))
+
+    def _on_pause_state(self, paused):
+        if not self.engine.running:
+            return
+        self.pause_btn.setEnabled(True)
+        self.pause_btn.setText("Resume" if paused else "Pause")
+        self.pause_btn.set_kind("success" if paused else "ghost")
+        self.pause_btn.icon_name = "play" if paused else "pause"
+        self.pause_btn.update()
+        if paused:
+            self._on_phase_display("Paused", "The macro isn't touching Roblox. Release it to play or fix something, "
+                                   "dock it again, then press Resume. Stop ends the run.", "idle")
+        self._update_pill()
+
     def _set_running_ui(self, running):
+        self.pause_btn.setVisible(running)
+        self.pause_btn.setEnabled(True)
+        self.pause_btn.setText("Pause")
+        self.pause_btn.set_kind("ghost")
+        self.pause_btn.icon_name = "pause"
         self.start_btn.setEnabled(True)
         self.start_btn.setText("Stop" if running else "Start")
         self.start_btn.set_kind("danger" if running else "success")
@@ -1736,7 +1802,9 @@ class MainWindow(QMainWindow):
         if self.recorder.is_recording:
             self.pill.set_state("Recording", theme.DANGER_TEXT, True)
         elif self.engine.running:
-            if self.engine.restart_pending:
+            if self.engine.paused:
+                self.pill.set_state("Paused", theme.WARNING, False)
+            elif self.engine.restart_pending:
                 self.pill.set_state("Restarting", theme.WARNING, True)
             else:
                 queue = getattr(self, "_queue", None)

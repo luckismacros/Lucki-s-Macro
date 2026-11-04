@@ -1527,7 +1527,7 @@ class EventsPage(ModePage):
         self.halloween_card.body.addWidget(label(
             "Works with the game's Auto Start and Auto Retry on or off - on is faster. The macro joins (Events › "
             "Halloween Event › Select Stage › Start) or picks up a match that's already running, keeps Auto Play on, and "
-            "at stage 5 opens the Forge and buys the Final Boss. After the match it clicks Repeat Stage, or just carries "
+            "at stage 4 opens the Forge on the Final Boss and buys it the moment it unlocks at stage 5. After the match it clicks Repeat Stage, or just carries "
             "on if the game restarted the stage itself.", "hint", wrap=True))
         self.halloween_card.set_done(True)
 

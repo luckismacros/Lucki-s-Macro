@@ -118,6 +118,7 @@ ICONS = {
 FILLED_ICONS = {
     "play": '<path d="M7 5v14l12-7z"/>',
     "stop": '<rect x="5" y="5" width="14" height="14" rx="2.5"/>',
+    "pause": '<rect x="6" y="5" width="4.2" height="14" rx="1.4"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.4"/>',
     "record": '<circle cx="12" cy="12" r="7"/>',
     "logo": '<path d="M7 5v14l12-7z"/>',
 }

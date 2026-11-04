@@ -74,6 +74,9 @@ PORTAL_NAV_MAX_ATTEMPTS = 3
 # failing counts as healthy again, so the next wait starts back at the base.
 RESTART_BASE_DELAY = 30
 RESTART_MAX_DELAY = 300
+# restart_reason of a run the player paused (see BotEngine.pause) - not a problem, never
+# counted or reported as a restart.
+PAUSED_REASON = "PAUSED"
 RESTART_RESET_AFTER = 600
 
 # Stops that Never Stop deliberately does NOT restart after: hitting the defeat limit is
@@ -165,6 +168,14 @@ class BotEngine:
         self.bot_thread = None
         self.phase_text = ""
         self.mode_label = ""
+        # Pause (2026-11-04): the run's current step is stopped like Stop does, but the run
+        # itself is held, not ended - counters, run limit and queue step all stay. Resume runs
+        # the mode again from its own screen check (the Never Stop restart path), so it carries
+        # on from wherever the game is. paused = the player wants it paused; _pause_pending =
+        # the step hasn't wound down yet; pause_reached = it has, so Roblox is free to touch.
+        self.paused = False
+        self._pause_pending = False
+        self.pause_reached = False
 
     # --- thin passthroughs, so the extracted method bodies below read exactly as
     # they did as BotGUI methods (self.log(...), self.set_phase(...)) -----------
@@ -195,6 +206,7 @@ class BotEngine:
         config.STUCK_DETECTED = None
         self.user_stop_requested = False
         self.restart_pending = False
+        self.paused = self._pause_pending = self.pause_reached = False
         self.apply_run_behavior_settings()
         SESSION.start()
         self._nav_failures = 0
@@ -1926,6 +1938,11 @@ class BotEngine:
             if not self.restart_pending:
                 return
 
+            if self.restart_reason == PAUSED_REASON:
+                if not self._wait_while_paused():
+                    return
+                continue
+
             if time.time() - started >= RESTART_RESET_AFTER:
                 restarts_in_a_row = 0
             restarts_in_a_row += 1
@@ -1966,12 +1983,60 @@ class BotEngine:
                     return
             self.log(f"NEVER STOP: restarting now (restart #{SESSION.restarts}).")
 
+    # --- pause -----------------------------------------------------------------------
+    def pause(self):
+        """Stops the current step and holds the run (see __init__). False if nothing to pause."""
+        if not self.running or self.paused or self.user_stop_requested:
+            return False
+        self.paused = True
+        self._pause_pending = True
+        self.pause_reached = False
+        config.STOP_REQUESTED = True
+        self.log("Pause requested - finishing the current step safely...")
+        return True
+
+    def resume(self):
+        """Lets a paused run carry on: the mode re-reads the screen and picks up from there."""
+        if not self.running or not self.paused:
+            return False
+        self.paused = False
+        return True
+
+    def _wait_while_paused(self):
+        """In _supervised_run: holds until Resume (True) or Stop (False - the run is ended)."""
+        self.pause_reached = True
+        self.log("PAUSED. The macro isn't touching Roblox - you can release it, play, fix things, then dock it "
+                 "again. Press Resume to carry on from wherever the game is, or Stop to end the run.")
+        self.ui.on_pause_state(True)
+        while self.paused and not self.user_stop_requested:
+            time.sleep(0.3)
+        self.pause_reached = False
+        if self.user_stop_requested:
+            self.paused = False
+            config.STOP_REQUESTED = True
+            self._cleanup()
+            return False
+        config.STOP_REQUESTED = False
+        config.STUCK_DETECTED = None
+        self.log("RESUMED - reading the screen to carry on from where the game is.")
+        self.ui.on_pause_state(False)
+        return True
+
     def _cleanup(self):
         # Every way a run can end funnels through here, which is exactly what a
         # notification wants: the point of messaging Discord is the unattended run that
         # ended at 03:00 for a reason nobody was awake to see.
         stopped_by_user = False
         reason = config.STUCK_DETECTED
+
+        # Pause: the step ended because the player paused - the run goes on after Resume.
+        # No summary, no "Run stopped" message; _supervised_run() holds it.
+        if self._pause_pending and not self.user_stop_requested:
+            self._pause_pending = False
+            self.restart_reason = PAUSED_REASON
+            self.restart_pending = True
+            return
+        self._pause_pending = False
 
         # Never Stop: a problem is not the end of the run. Hand back to _supervised_run()
         # before anything reports the run as over - no summary, no "Run stopped" message,
@@ -2093,6 +2158,7 @@ class BotEngine:
     def stop(self):
         self.user_stop_requested = True
         config.STOP_REQUESTED = True
+        self.paused = False
         self.log("Stop requested. Waiting for action to finish...")
         self.ui.reset_buttons()
 

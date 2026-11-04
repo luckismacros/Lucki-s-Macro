@@ -15,6 +15,10 @@ Fallbacks:
   - The Final Boss's Buy is only looked for under the Final Boss card's own top: every card
     in the Forge has the same "Buy 500" button.
   - The card not in view after Forge: scrolled down a little at a time, then back up.
+  - Faster buy: at stage BOSS_STAGE - 1 the Forge is opened on the Final Boss card and left
+    open (it doesn't cover the stage counter; the end screen closes it), and its Buy is clicked
+    the moment it turns from grey to green. The stage-BOSS_STAGE buy stays as the fallback, and
+    the Forge is reopened if it closed.
   - The boss is bought ONCE per match. Since the 2026-11-03 patch the stages keep
     going after the buy and the match can run a long time, so neither the stage going up nor
     a long wait means the buy failed - re-buying only threw candy away (live 2026-11-03: it
@@ -69,6 +73,16 @@ FORGE_HOVER = (800, 450)
 # The Buy button's centre below the Final Boss card's top crop (reference px).
 BUY_DY = 141
 BUY_REACH = 110        # wider than the button (169 px) - the area has to hold it whole
+# Buy is green (can be bought) when this share of its pixels is clearly green: 0.76 on the
+# green capture, 0.00 on the grey one.
+BUY_GREEN_SHARE = 0.35
+BUY_HALF_W, BUY_HALF_H = 70, 15     # the area measured around the button's centre (ref px)
+# At stage 5 with Buy still grey: how long to give it to turn green before clicking anyway.
+BUY_GREEN_WAIT = 5.0
+# Pre-open: the Final Boss card not seen this many looks in a row - the Forge closed, reopen.
+PREOPEN_LOST_LOOKS = 3
+# Around the card's last place to look for it (ref px) - more than half its picture (194x178).
+PREOPEN_CARD_REACH = 130
 # Bought, then the stage read lower than the stage bought at this many times (not necessarily
 # in a row - unreadable looks in between don't matter): that match is over and the next one
 # is running (the end screen was missed). Counted from the buy; a read at or above the bought
@@ -276,6 +290,27 @@ class StageLearner:
         self.last, self.last_glyph = int(nxt), self.cand
         self.cand, self.looks = None, 0
         return int(nxt)
+
+
+def _buy_is_green(shot, point):
+    """True if the Buy button centred on `point` (ref px) is the green, buyable one."""
+    s = config.render_scale()
+    x0, y0 = max(0, int((point[0] - BUY_HALF_W) * s)), max(0, int((point[1] - BUY_HALF_H) * s))
+    area = shot[y0:int((point[1] + BUY_HALF_H) * s), x0:int((point[0] + BUY_HALF_W) * s)]
+    if area.size == 0:
+        return False
+    b, g, r = (area[..., i].astype(int) for i in range(3))
+    return float(((g - np.maximum(r, b)) > 40).mean()) >= BUY_GREEN_SHARE
+
+
+def _buy_point(shot, card):
+    """The Final Boss's Buy centre under its card (green or grey - either look finds it)."""
+    guess = (card[0], card[1] + BUY_DY)
+    for template in (config.HALLOWEEN_BUY_BTN, config.HALLOWEEN_GREY_BUY_BTN):
+        found = _find_near(shot, template, guess, BUY_REACH)
+        if found:
+            return (found[0], found[1]), True
+    return guess, False
 
 
 def _halt(reason):
@@ -488,11 +523,22 @@ class HalloweenRunner:
             path = health.save_debug_screenshot("halloween_no_final_boss")
             print(f"[{TAG}] Couldn't get to the Final Boss card (screen saved: {path}).")
             return False
-        guess = (card[0], card[1] + BUY_DY)
-        buy = _find_near(capture_screen(), config.HALLOWEEN_BUY_BTN, guess, BUY_REACH)
-        point = (buy[0], buy[1]) if buy else guess
+        point, recognised = _buy_point(capture_screen(), card)
+        if recognised and not _buy_is_green(capture_screen(), point):
+            # Grey for a moment longer than the counter (or the candy isn't in yet).
+            deadline = time.time() + BUY_GREEN_WAIT
+            while time.time() < deadline and not config.STOP_REQUESTED:
+                time.sleep(0.25)
+                if _buy_is_green(capture_screen(), point):
+                    break
+            else:
+                print(f"[{TAG}] The Final Boss's Buy is still grey - clicking it anyway.")
         print(f"[{TAG}] Buying the Final Boss at ({point[0]:.0f}, {point[1]:.0f})"
-              f"{'' if buy else ' (its Buy button not recognised - clicking where it should be)'}.")
+              f"{'' if recognised else ' (its Buy button not recognised - clicking where it should be)'}.")
+        return self._click_buy(point)
+
+    def _click_buy(self, point):
+        """Buy clicked, then the Forge closed. True."""
         click_at(point[0], point[1])
         time.sleep(1.0)
         health.save_debug_screenshot("halloween_after_buy")
@@ -541,15 +587,43 @@ class HalloweenRunner:
         start_looks = [0]
         last_start_press = [0.0]
         lower_after_buy = [0]             # reads below the bought stage since the last read at/above it
+        pre_reads = [0]                   # looks at the stage before the boss's
+        forge_card = [None]               # the boss card while the Forge is held open (pre-open)
+        card_lost = [0]
+        preopen_next = [0.0]
+
+        def bought(stage_now):
+            bought_at[0] = time.time()
+            bought_stage[0] = stage_now
+            highest[0] = max(highest[0], stage_now or 0)
+            lower_after_buy[0] = 0
+            forge_card[0] = None
 
         def buy(stage_now):
             if self._buy_final_boss():
-                bought_at[0] = time.time()
-                bought_stage[0] = stage_now
-                highest[0] = max(highest[0], stage_now or 0)
-                lower_after_buy[0] = 0
+                bought(stage_now)
             else:
                 next_try[0] = time.time() + BUY_FAIL_COOLDOWN
+
+        def preopen_watch(shot, n):
+            """Forge held open on the boss card: Buy clicked the moment it's green. True if bought."""
+            card = _find_near(shot, config.HALLOWEEN_FINAL_BOSS_TITLE, forge_card[0][:2], PREOPEN_CARD_REACH)
+            if card is None:
+                card_lost[0] += 1
+                if card_lost[0] >= PREOPEN_LOST_LOOKS:
+                    print(f"[{TAG}] The Forge closed - opening it again.")
+                    forge_card[0] = None
+                return False
+            card_lost[0] = 0
+            forge_card[0] = card
+            point, recognised = _buy_point(shot, card)
+            if recognised and _buy_is_green(shot, point):
+                print(f"[{TAG}] The Final Boss's Buy turned green - buying it now.")
+                self._phase("BUYING THE FINAL BOSS", "#f9a825")
+                self._click_buy(point)
+                bought(n if n is not None and n >= BOSS_STAGE else BOSS_STAGE)
+                return True
+            return False
 
         def watch(shot):
             now = time.time()
@@ -611,6 +685,27 @@ class HalloweenRunner:
 
             if now < next_try[0]:
                 return None
+            # Pre-open: the Forge on the boss card from the stage before, Buy clicked when green.
+            if forge_card[0] is not None:
+                if preopen_watch(shot, n):
+                    return None
+            elif now >= preopen_next[0]:
+                if n is not None:
+                    pre_reads[0] = pre_reads[0] + 1 if n == BOSS_STAGE - 1 else 0
+                if pre_reads[0] >= STAGE_READS_NEEDED:
+                    pre_reads[0] = 0
+                    print(f"[{TAG}] Stage {n} - opening the Forge on the Final Boss to buy it the moment it "
+                          f"unlocks.")
+                    self._phase("FORGE OPEN - WAITING FOR THE BOSS", "#f9a825")
+                    card = self._open_forge_and_find_card()
+                    if card:
+                        forge_card[0], card_lost[0] = card, 0
+                    else:
+                        print(f"[{TAG}] Couldn't hold the Forge open on the Final Boss - it'll be bought at stage "
+                              f"{BOSS_STAGE} as usual.")
+                        self._close_forge()
+                        preopen_next[0] = time.time() + 30.0
+                    return None
             # The boss stage's picture too (the whole circle - only while it's the colour it was cut in).
             picture = _find_near(shot, config.HALLOWEEN_BOSS_STAGE_PIC,
                                  (config.HALLOWEEN_STAGE_X, config.HALLOWEEN_STAGE_Y), config.HALLOWEEN_STAGE_REACH)
