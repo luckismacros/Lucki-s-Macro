@@ -5,7 +5,7 @@ Global Configuration & State Management
 
 # Bumped by hand on every release. Compared against GitHub's latest release tag by
 # modules/update_check.py - see its own module docstring for the full scheme.
-APP_VERSION = "3.8"
+APP_VERSION = "3.9"
 
 # Flow Control
 STOP_REQUESTED = False
