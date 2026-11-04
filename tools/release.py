@@ -7,6 +7,10 @@ installs it itself - see modules/self_update.py.
   release.bat 3.6.1                      (or: .venv\\Scripts\\python tools\\release.py 3.6.1)
   release.bat 3.6.1 --notes "Fixed X"    release notes (default: the last commit's message)
   release.bat 3.6.1 --no-upload          build + zip only, nothing published
+  release.bat 3.6.1 --prerelease         published, but NOT sent to anyone: installed macros
+                                         only ever follow the latest full release. Download it
+                                         by hand into Downloads and try it first.
+  release.bat 3.6.1 --promote            that pre-release goes out to everyone (no rebuild)
 
 What it does:
   1. config.APP_VERSION -> the new version; that change is committed on its own if it's
@@ -15,7 +19,7 @@ What it does:
   3. PyInstaller build of macro_slop_qt.spec into build_release/ (never into dist*/,
      which may hold someone's data).
   4. releases/Luckis_Macro_v<version>.zip - the name is what the updater looks for.
-  5. gh release create v<version> with the zip, marked latest.
+  5. gh release create v<version> with the zip, marked latest (or as a pre-release).
 
 Needs the GitHub CLI signed in once: gh auth login
 """
@@ -93,12 +97,27 @@ def main():
     ap.add_argument("version", nargs="?", help="e.g. 3.6.1")
     ap.add_argument("--notes", help="release notes (default: the last commit's message)")
     ap.add_argument("--no-upload", action="store_true", help="build and zip only")
+    ap.add_argument("--prerelease", action="store_true",
+                    help="publish without sending it to installed macros, to try it first")
+    ap.add_argument("--promote", action="store_true",
+                    help="send an existing pre-release to everyone (no rebuild)")
     args = ap.parse_args()
+    if args.no_upload and (args.prerelease or args.promote):
+        sys.exit("--no-upload publishes nothing, so it can't go with --prerelease or --promote.")
+    if args.prerelease and args.promote:
+        sys.exit("Use --prerelease first, try it, then --promote on its own.")
 
     version = (args.version or input("Version to release (e.g. 3.6.1): ")).strip().lstrip("vV.")
     if not re.fullmatch(r"\d+(\.\d+)*", version):
         sys.exit(f"'{version}' isn't a version number like 3.6.1")
     tag = f"v{version}"
+
+    if args.promote:
+        if shutil.which("gh") is None:
+            sys.exit("The GitHub CLI (gh) isn't installed - https://cli.github.com")
+        run(["gh", "release", "edit", tag, "--prerelease=false", "--latest"])
+        print(f"\nPromoted {tag}. Every macro picks it up on launch, within 3 hours, or with /update on Discord.")
+        return
 
     if not args.no_upload:
         if shutil.which("gh") is None:
@@ -130,9 +149,14 @@ def main():
     with open(notes_file, "w", encoding="utf-8") as f:
         f.write(notes)
     branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture=True).stdout.strip()
+    channel = ["--prerelease", "--latest=false"] if args.prerelease else ["--latest"]
     run(["gh", "release", "create", tag, zip_path, "--title", f"Update {version}",
-         "--notes-file", notes_file, "--target", branch, "--latest"])
-    print(f"\nPublished {tag}. Every macro picks it up on launch, within 3 hours, or with /update on Discord.")
+         "--notes-file", notes_file, "--target", branch, *channel])
+    if args.prerelease:
+        print(f"\nPublished {tag} as a pre-release - no installed macro will pick it up.\n"
+              f"Download it by hand, try it, then: release.bat {version} --promote")
+    else:
+        print(f"\nPublished {tag}. Every macro picks it up on launch, within 3 hours, or with /update on Discord.")
 
 
 if __name__ == "__main__":

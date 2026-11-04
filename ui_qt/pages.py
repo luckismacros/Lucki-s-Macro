@@ -1502,8 +1502,8 @@ class OthersPage(ModePage):
 class EventsPage(ModePage):
     """
     Events - the limited-time events, each removed when its event ends:
-      Halloween - the Halloween Event: the Final Boss bought from the Forge at stage 5, Repeat
-                  Stage - modules/halloween.py.
+      Halloween - the Halloween Event: the Final Boss bought from the Forge at the Heat picked
+                  here, Repeat Stage - modules/halloween.py.
     Sharkfang sat here in 3.7 only and is back on the Others page; settings saved here move
     back (see MainWindow._restore_ui_state and QueuePage.restore).
     """
@@ -1512,6 +1512,8 @@ class EventsPage(ModePage):
 
     _MODES = [("halloween", "Halloween")]
     MOVED_FROM_OTHERS = ("halloween",)
+    _BOSS_HEATS = [("5", "Heat 5"), ("6", "Heat 6"), ("7", "Heat 7")]     # halloween.BOSS_HEATS
+    _DEFAULT_BOSS_HEAT = "5"
 
     def __init__(self, host):
         super().__init__(host)
@@ -1527,8 +1529,12 @@ class EventsPage(ModePage):
         self.halloween_card.body.addWidget(label(
             "Works with the game's Auto Start and Auto Retry on or off - on is faster. The macro joins (Events › "
             "Halloween Event › Select Stage › Start) or picks up a match that's already running, keeps Auto Play on, and "
-            "at stage 4 opens the Forge on the Final Boss and buys it the moment it unlocks at stage 5. After the match it clicks Repeat Stage, or just carries "
-            "on if the game restarted the stage itself.", "hint", wrap=True))
+            "buys the Final Boss from the Forge at the Heat you pick below. After the match it clicks Repeat Stage, or just "
+            "carries on if the game restarted the stage itself.", "hint", wrap=True))
+        self.halloween_card.body.addWidget(field("Buy the Final Boss at"))
+        self.boss_heat = Segmented(self._BOSS_HEATS, self._DEFAULT_BOSS_HEAT)
+        self.boss_heat.changed.connect(self.emit_changed)
+        self.halloween_card.body.addWidget(self.boss_heat)
         self.halloween_card.set_done(True)
 
         self.finish()
@@ -1543,17 +1549,21 @@ class EventsPage(ModePage):
         return [("Units", "ok", "the game's Auto Play")]
 
     def run_spec(self):
-        return "run_halloween", (), [("Gamemode", "Halloween Event"), ("Boss", "Final Boss at stage 5")]
+        heat = int(self.boss_heat.value())
+        return "run_halloween", (heat,), [("Gamemode", "Halloween Event"), ("Boss", f"Final Boss at Heat {heat}")]
 
     def summary(self):
-        return "Halloween Event - Final Boss at stage 5, Repeat Stage"
+        return f"Halloween Event - Final Boss at Heat {self.boss_heat.value()}, Repeat Stage"
 
     def state(self):
-        return {"mode": self.mode.value()}
+        return {"mode": self.mode.value(), "boss_heat": self.boss_heat.value()}
 
     def restore(self, data):
         if data.get("mode") in dict(self._MODES):
             self.mode.set_value(data["mode"], animate=False)
+        # Settings and queue steps saved before this choice existed have no Heat: the default.
+        heat = str(data.get("boss_heat", self._DEFAULT_BOSS_HEAT))
+        self.boss_heat.set_value(heat if heat in dict(self._BOSS_HEATS) else self._DEFAULT_BOSS_HEAT, animate=False)
         self._on_mode()
 
 

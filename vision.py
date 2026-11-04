@@ -284,29 +284,34 @@ _REFINE_PAD = 6         # full-res pixels searched around each coarse spot
 # this distance below its threshold at full resolution, so every decision made near the
 # line is made by exactly the same full-frame match as before.
 NEAR_MISS_RECHECK = 0.15
-_half_frame = {"src": None, "small": None}
+# On a slow PC (config.low_power) the coarse pass also runs in greyscale: one channel instead of
+# three. Only the coarse pass - it just picks the spots, and every score that decides anything
+# is still measured in colour at full resolution, so no threshold changes meaning.
+_half_frame = {"src": None, "grey": False, "small": None}
 _half_templates = {}
 
 
-def _half(img):
-    return cv2.resize(img, (max(1, img.shape[1] // 2), max(1, img.shape[0] // 2)),
-                      interpolation=cv2.INTER_AREA)
+def _half(img, grey=False):
+    small = cv2.resize(img, (max(1, img.shape[1] // 2), max(1, img.shape[0] // 2)),
+                       interpolation=cv2.INTER_AREA)
+    return cv2.cvtColor(small, cv2.COLOR_BGR2GRAY) if grey else small
 
 
-def _half_of_frame(screenshot):
+def _half_of_frame(screenshot, grey=False):
     # One frame is matched against many templates in a row; halve it once.
-    if _half_frame["src"] is not screenshot:
-        _half_frame["src"], _half_frame["small"] = screenshot, _half(screenshot)
+    if _half_frame["src"] is not screenshot or _half_frame["grey"] != grey:
+        _half_frame["src"], _half_frame["grey"], _half_frame["small"] = screenshot, grey, _half(screenshot, grey)
     return _half_frame["small"]
 
 
-def _half_of_template(template):
-    entry = _half_templates.get(id(template))
+def _half_of_template(template, grey=False):
+    key = (id(template), grey)
+    entry = _half_templates.get(key)
     if entry is None or entry[0] is not template:
         if len(_half_templates) > 512:
             _half_templates.clear()
-        entry = (template, _half(template))
-        _half_templates[id(template)] = entry
+        entry = (template, _half(template, grey))
+        _half_templates[key] = entry
     return entry[1]
 
 
@@ -324,8 +329,9 @@ def match_best(screenshot, template, exact=False):
         _, val, _, loc = cv2.minMaxLoc(cv2.matchTemplate(screenshot, template, cv2.TM_CCOEFF_NORMED))
         return val, loc
 
-    small_t = _half_of_template(template)
-    coarse = cv2.matchTemplate(_half_of_frame(screenshot), small_t, cv2.TM_CCOEFF_NORMED)
+    grey = config.low_power()
+    small_t = _half_of_template(template, grey)
+    coarse = cv2.matchTemplate(_half_of_frame(screenshot, grey), small_t, cv2.TM_CCOEFF_NORMED)
     c_h, c_w = small_t.shape[:2]
     best_val, best_loc = -1.0, None
     for _ in range(_COARSE_PEAKS):

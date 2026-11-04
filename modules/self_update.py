@@ -23,6 +23,7 @@ Only works in the built app - running from source (python app_qt.py) there's no 
 swap, so supported() is False there and the UI falls back to the release page.
 """
 import ctypes
+import hashlib
 import json
 import os
 import re
@@ -69,12 +70,17 @@ def download_and_stage(info, progress=None):
     raises UpdateError with a readable reason.
     """
     url, size = info.get("download_url"), int(info.get("size") or 0)
+    # GitHub reports each asset's SHA-256 ("sha256:<hex>"). A release without one is still
+    # installed, so a change on GitHub's side can't stop every copy from updating.
+    digest = str(info.get("digest") or "")
+    expected_sha256 = digest[7:].lower() if digest.lower().startswith("sha256:") else None
     if not url:
         raise UpdateError("this release has no app zip attached")
     work = _update_dir()
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(work, exist_ok=True)
     zip_path = os.path.join(work, "download.zip")
+    sha256 = hashlib.sha256()
     try:
         request = urllib.request.Request(url, headers={"User-Agent": "LuckisMacro-Updater"})
         with urllib.request.urlopen(request, timeout=30) as resp, open(zip_path + ".part", "wb") as out:
@@ -85,6 +91,7 @@ def download_and_stage(info, progress=None):
                 if not chunk:
                     break
                 out.write(chunk)
+                sha256.update(chunk)
                 got += len(chunk)
                 if progress and total:
                     progress(min(1.0, got / total))
@@ -92,6 +99,8 @@ def download_and_stage(info, progress=None):
         raise UpdateError(f"the download failed ({type(e).__name__}: {e})")
     if size and got != size:
         raise UpdateError(f"the download stopped early ({got / 1e6:.0f} of {size / 1e6:.0f} MB)")
+    if expected_sha256 and sha256.hexdigest() != expected_sha256:
+        raise UpdateError("the download doesn't match the release's SHA-256, so it wasn't installed")
     os.replace(zip_path + ".part", zip_path)
 
     new_root = os.path.join(work, "new")

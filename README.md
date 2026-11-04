@@ -12,12 +12,27 @@ keep a run going while you're not sitting at the keyboard.
 
 It does NOT:
  - touch your Roblox account, password, or cookies
- - read, upload or modify any files other than its own settings/recordings
- - talk to the internet at all, unless YOU turn on the optional Discord
-   notification feature and paste in a webhook URL you made yourself. If you
-   never set one up, nothing is ever sent anywhere.
- - run in the background, hide itself, install anything, or survive after
-   you close it. It's one folder; delete the folder and it's gone.
+ - read, upload or modify any files outside its own folder
+ - run in the background, hide itself, install anything outside its folder,
+   or survive after you close it. It's one folder; delete the folder and
+   it's gone.
+
+WHEN IT USES THE INTERNET
+-------------------------
+ - Update checks: on launch and every 3 hours it asks this project's public
+   GitHub page whether there is a newer version. An update is only installed
+   when you say yes in the app, or send /update on Discord yourself. The
+   download is checked against the SHA-256 that GitHub reports for it.
+ - Discord, only if YOU set it up (both are off until you do):
+     - Notifications, through a webhook URL you made yourself. These can
+       include screenshots of the game.
+     - A remote-control bot, through a bot token you made yourself. It only
+       takes commands from the Discord user ID you saved, and it can send you
+       screenshots and log files and start, stop or update the macro.
+
+Your webhook and bot token are saved in plain text in settings.json. Don't
+send anyone your macro folder as it is. If a token ever leaks, reset it on
+Discord's developer page.
 
 It's a personal project, made by one person as a hobby, not a company or a
 paid product. It's free, and it's still in beta - see "BETA / BUGS" below.

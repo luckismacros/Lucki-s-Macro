@@ -375,6 +375,15 @@ UI_SCALE = 1.0
 # let clicks fall between Roblox's frames), or forced by Settings > Runs > This PC.
 SLOWNESS = 1.0
 
+
+def low_power():
+    """
+    True on a PC measured (or set in Settings > Runs > This PC) as slow: the macro then checks
+    the screen less often and more cheaply, so it takes less CPU away from Roblox. A normal PC
+    never changes behaviour, and "Fast PC" in Settings turns it off.
+    """
+    return SLOWNESS > 1.05
+
 # Coarse-to-fine template matching (vision.match_best). False = the old full-frame match
 # everywhere - identical results, several times slower. Kept as a switch for diagnosis.
 FAST_MATCHING = True
@@ -1678,10 +1687,10 @@ HALLOWEEN_EVENT_GAMEMODE_BTN = f"{HALLOWEEN_DIR}/Event_Gamemode.png"
 HALLOWEEN_SELECT_STAGE_BTN = f"{HALLOWEEN_DIR}/Select_Stage.png"
 HALLOWEEN_START_BTN = f"{HALLOWEEN_DIR}/Start_Stage.png"            # the party screen's Start
 HALLOWEEN_REPEAT_STAGE_BTN = f"{HALLOWEEN_DIR}/Repeat_Stage.png"
-# The stage counter at the top (the circle left of "Heat Bars"): its look at the boss stage
-# (halloween.BOSS_STAGE, 5 since 2026-11-04) - a backup, the digit in it is what's read. The
-# circle changes colour with the stage.
-HALLOWEEN_BOSS_STAGE_PIC = f"{HALLOWEEN_DIR}/Stage_5.png"
+# The stage counter at the top (the circle left of "Heat Bars"): its look at each Heat the boss
+# can be bought at (halloween.BOSS_HEATS) - a backup, the digit in it is what's read. The circle
+# changes colour with the stage.
+HALLOWEEN_HEAT_PICS = {heat: f"{HALLOWEEN_DIR}/Stage_{heat}.png" for heat in (5, 6, 7)}
 HALLOWEEN_STAGE_X, HALLOWEEN_STAGE_Y = 571, 89                     # where that circle sits (reference px)
 HALLOWEEN_STAGE_REACH = 70                                         # how far around it to look
 HALLOWEEN_FORGE_BTN = f"{HALLOWEEN_DIR}/Forge.png"                  # bottom middle, above the money
@@ -1691,7 +1700,7 @@ HALLOWEEN_FINAL_BOSS_CARD = f"{HALLOWEEN_DIR}/Final_Boss_Card.png"
 HALLOWEEN_FINAL_BOSS_TITLE = f"{HALLOWEEN_DIR}/Final_Boss_Title.png"
 # "Buy 500" - every card has one, so it's only ever looked for below the Final Boss card's top.
 HALLOWEEN_BUY_BTN = f"{HALLOWEEN_DIR}/Buy_Card.png"
-# The same Buy before the boss can be bought (grey until stage 5). Shape-wise the two match each
+# The same Buy before the boss can be bought (grey below Heat 5). Shape-wise the two match each
 # other (0.79), so green vs grey is told by colour (halloween._buy_is_green), not by template.
 HALLOWEEN_GREY_BUY_BTN = f"{HALLOWEEN_DIR}/Grey_Buy_Card.png"
 # The Forge's X, closed after buying - the same X as Sho's panels (its crop is reused).
@@ -1704,5 +1713,5 @@ for _path in (HALLOWEEN_EVENTS_BTN, HALLOWEEN_EVENT_CARD, HALLOWEEN_EVENT_GAMEMO
 TEMPLATE_THRESHOLDS.update({
     HALLOWEEN_EVENT_CARD: 0.80,
     HALLOWEEN_START_BTN: 0.85,                # the green buttons look alike - see MONSTER_CLASH_START_BTN
-    HALLOWEEN_BOSS_STAGE_PIC: 0.80,
+    **{pic: 0.80 for pic in HALLOWEEN_HEAT_PICS.values()},
 })

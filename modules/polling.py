@@ -58,6 +58,11 @@ SETTLE_TOLERANCE_PX = 2
 # After a click, how long the button gets to disappear before it counts as missed.
 CLICK_GONE_WAIT_SECONDS = 1.5
 
+# On a slow PC (config.low_power): the safety checks run on one tick in this many.
+LOW_POWER_SAFETY_EVERY = 3
+# How often a long wait logs its average work per tick.
+PERF_LOG_SECONDS = 300.0
+
 
 def settle_match(template, match, label, threshold=None):
     """
@@ -183,6 +188,10 @@ def poll_until(targets, interval, label, timeout=None, stuck_timeout=None,
     """
     stuck = health.StuckTimer(stuck_timeout, label)
     elapsed = 0.0
+    tick = 0
+    work_seconds = 0.0
+    work_ticks = 0
+    work_logged_at = time.time()
     # lobby_grace (seconds, None = off): for waits that happen INSIDE a stage/match.
     # If the lobby stays on screen that long, the player was sent back there without a
     # disconnect popup - a server restart for a patch does exactly that (live,
@@ -193,6 +202,13 @@ def poll_until(targets, interval, label, timeout=None, stuck_timeout=None,
     lobby_seen_at = None
 
     while not config.STOP_REQUESTED:
+        tick_started = time.time()
+        tick += 1
+        # On a slow PC the screen-wide safety checks below run every few ticks instead of every
+        # tick, which leaves the CPU to Roblox. What this wait is actually watching for is still
+        # checked every tick. A prompt or a disconnect just gets noticed a few seconds later.
+        run_safety_checks = not config.low_power() or tick % LOW_POWER_SAFETY_EVERY == 1
+
         screenshot = capture_screen()
 
         for t in targets:
@@ -215,7 +231,7 @@ def poll_until(targets, interval, label, timeout=None, stuck_timeout=None,
                 return custom_result
 
         # Before on_tick: the fishing keep-alive would otherwise keep clicking the lobby.
-        if lobby_grace is not None:
+        if lobby_grace is not None and run_safety_checks:
             from modules.lobby import at_lobby  # lazy: lobby imports prompts, which polling also uses
             if at_lobby(screenshot):
                 now = time.time()
@@ -240,12 +256,13 @@ def poll_until(targets, interval, label, timeout=None, stuck_timeout=None,
         if on_tick is not None:
             on_tick()
 
-        dismiss_click_anywhere_if_present(screenshot)
-        if game_results:
-            handle_game_results_if_present(screenshot)
+        if run_safety_checks:
+            dismiss_click_anywhere_if_present(screenshot)
+            if game_results:
+                handle_game_results_if_present(screenshot)
 
-        if handle_disconnect_if_present(screenshot):
-            return "RECONNECTED"
+            if handle_disconnect_if_present(screenshot):
+                return "RECONNECTED"
 
         # Checked AFTER the disconnect handler: a disconnect popup is a live client
         # and must be handled as one, not mistaken for a dead game.
@@ -271,6 +288,14 @@ def poll_until(targets, interval, label, timeout=None, stuck_timeout=None,
             waiting_for = ", ".join(t.debug_label or os.path.basename(t.template) for t in targets)
             stuck.report(screenshot, extra=f"It was waiting for: {waiting_for}")
             return _halt(f"STUCK - waiting for {waiting_for}")
+
+        # How much of each tick is the macro's own work, for comparing PCs and versions.
+        work_seconds += time.time() - tick_started
+        work_ticks += 1
+        if time.time() - work_logged_at >= PERF_LOG_SECONDS:
+            print(f"[perf] {label}: {work_seconds / work_ticks * 1000:.0f} ms of work per check, "
+                  f"over {work_ticks} checks (low power mode {'on' if config.low_power() else 'off'}).")
+            work_seconds, work_ticks, work_logged_at = 0.0, 0, time.time()
 
         time.sleep(interval)
         elapsed += interval

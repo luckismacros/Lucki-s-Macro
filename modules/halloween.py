@@ -7,7 +7,8 @@ run_halloween() in engine.py and the Halloween option on the Events page.
 As described by the player (2026-11-01):
   Lobby -> Events -> Halloween Event -> (Event Gamemode) -> Select Stage -> Start -> Auto
   Play on -> Start Game. Once the stage counter at the top (the circle left of "Heat Bars")
-  shows BOSS_STAGE (5 since 2026-11-04; the game had it at 4, then 6 on 2026-11-03): Forge ->
+  shows the Heat the player picked on the Events page (5, 6 or 7 - the game won't sell the boss
+  below Heat 5): Forge ->
   scroll down a bit to the Final Boss card -> its Buy -> the Forge's Close (the same X as the
   other panels). The boss ends the run; on a win, Repeat Stage -> Auto Play checked -> Start Game, and again.
 
@@ -15,10 +16,6 @@ Fallbacks:
   - The Final Boss's Buy is only looked for under the Final Boss card's own top: every card
     in the Forge has the same "Buy 500" button.
   - The card not in view after Forge: scrolled down a little at a time, then back up.
-  - Faster buy: at stage BOSS_STAGE - 1 the Forge is opened on the Final Boss card and left
-    open (it doesn't cover the stage counter; the end screen closes it), and its Buy is clicked
-    the moment it turns from grey to green. The stage-BOSS_STAGE buy stays as the fallback, and
-    the Forge is reopened if it closed.
   - The boss is bought ONCE per match. Since the 2026-11-03 patch the stages keep
     going after the buy and the match can run a long time, so neither the stage going up nor
     a long wait means the buy failed - re-buying only threw candy away (live 2026-11-03: it
@@ -26,9 +23,10 @@ Fallbacks:
   - Forge clicked again while its panel doesn't open; a buy that failed is retried 10s later.
   - Works with the game's Auto Start / Auto Retry ON or OFF: with Auto Retry the stage counter
     dropping back (or the next match running) is the end of the match, nothing to click.
-  - The stage is read from the white digit in the circle (any circle colour). BOSS_STAGE or
-    later on two looks in a row buys the boss - so a match picked up already running (after a
-    restart) buys only once it's really there.
+  - The stage is read from the white digit in the circle (any circle colour). The picked Heat
+    or later on two looks in a row buys the boss - so a match picked up already running (after
+    a restart) buys only once it's really there. The whole circle's picture is only a backup for
+    when the digit can't be read: a digit that was read always wins.
   - Digits with no saved sample are learned during a match: the counter showing a glyph none
     of the samples know, steady for a few looks and unlike the stage before it, is that stage
     + 1 (6 -> 7 -> 8). Learned digits are saved next to the settings (stage_digits_learned/),
@@ -61,6 +59,9 @@ from modules import health
 TAG = "Halloween"
 # A match shorter than this can't have ended - an end screen left over is ignored until then.
 MIN_MATCH = 25.0
+# A match that restarted sooner than this without the boss isn't counted as a defeat - reaching
+# the boss's stage alone takes minutes, so this was a misread or a leftover, not a real loss.
+MIN_MATCH_FOR_DEFEAT = 60.0
 # After a match: how long to wait for Repeat Stage before working out where the game is.
 AFTER_MATCH_WAIT = 45.0
 # After Forge: how long the Final Boss card gets to show before scrolling for it.
@@ -73,16 +74,18 @@ FORGE_HOVER = (800, 450)
 # The Buy button's centre below the Final Boss card's top crop (reference px).
 BUY_DY = 141
 BUY_REACH = 110        # wider than the button (169 px) - the area has to hold it whole
+# The Forge's list ends at y=726, so a Buy centred lower than this is cut off. The card's top
+# can match while it sits at the list's bottom edge (live 2026-11-04: y=702), which put Buy at
+# y=843 - on the unit bar, so "clicking where it should be" picked up a unit instead.
+FORGE_BUY_MAX_Y = 695
+# Extra scrolls to bring a Buy that's below the list's edge into view.
+FORGE_BUY_SCROLLS = 3
 # Buy is green (can be bought) when this share of its pixels is clearly green: 0.76 on the
 # green capture, 0.00 on the grey one.
 BUY_GREEN_SHARE = 0.35
 BUY_HALF_W, BUY_HALF_H = 70, 15     # the area measured around the button's centre (ref px)
-# At stage 5 with Buy still grey: how long to give it to turn green before clicking anyway.
+# With Buy still grey at the picked Heat: how long to give it to turn green before clicking anyway.
 BUY_GREEN_WAIT = 5.0
-# Pre-open: the Final Boss card not seen this many looks in a row - the Forge closed, reopen.
-PREOPEN_LOST_LOOKS = 3
-# Around the card's last place to look for it (ref px) - more than half its picture (194x178).
-PREOPEN_CARD_REACH = 130
 # Bought, then the stage read lower than the stage bought at this many times (not necessarily
 # in a row - unreadable looks in between don't matter): that match is over and the next one
 # is running (the end screen was missed). Counted from the buy; a read at or above the bought
@@ -91,13 +94,17 @@ STAGE_LOWER_AFTER_BUY = 3
 # The stage number is read from the white digit in the stage circle, so the circle's colour
 # doesn't matter - Stage_4.png is the whole circle and stopped matching once the circle wasn't
 # the green it was captured in (live 2026-11-02: past stage 4 to 5 without buying). Digits
-# cut from live frames at the reference size; 2, 4 and 6 score 0.13 or less against each other.
+# cut from live frames at the reference size. 4 and 5 were re-cut on 2026-11-04 (the old 4 scored
+# 0.66 on live frames). The re-cut ones score under 0.47 against every other digit. 3 and 7 are
+# the ones the macro learned live. The lower digits stay even though the boss isn't sold there:
+# reading them is how the macro knows the stage started over.
 STAGE_DIGITS_DIR = "assets/digits_stage"
 STAGE_DIGIT_MIN = 0.80          # a digit read below this counts as unreadable
-# The stage the Final Boss is bought at: 4 at launch, 6 on 2026-11-03, 5 since 2026-11-04. If the
-# game moves it again: change this, and config.HALLOWEEN_BOSS_STAGE_PIC to that stage's capture.
-BOSS_STAGE = 5
-STAGE_READS_NEEDED = 2          # BOSS_STAGE or later read this many looks in a row before buying
+# The Heats the Final Boss can be bought at, as offered on the Events page. The game doesn't sell
+# it below 5. To offer another: add it here and to config.HALLOWEEN_HEAT_PICS, and cut its digit.
+BOSS_HEATS = (5, 6, 7)
+DEFAULT_BOSS_HEAT = 5
+STAGE_READS_NEEDED = 2          # the picked Heat or later read this many looks in a row before buying
 # Learning digits that have no sample (see the module docstring).
 LEARNED_DIR_NAME = "stage_digits_learned"
 LEARNED_MIN = 0.90              # a learned digit has to match this well to count as read
@@ -364,14 +371,17 @@ _RESUME_AT = [
 # --- The run -------------------------------------------------------------------------------
 
 class HalloweenRunner:
-    def __init__(self, set_phase=None):
+    def __init__(self, set_phase=None, boss_heat=DEFAULT_BOSS_HEAT):
         self.set_phase = set_phase
+        self.boss_heat = boss_heat if boss_heat in BOSS_HEATS else DEFAULT_BOSS_HEAT
         self.consecutive_defeats = 0
         self.resumed = False              # the next Start Game wait is for a stage never left (Repeat Stage)
         self._match_started_at = 0.0
         self._last_result = None          # VICTORY / DEFEAT of the match that just ended, None = unknown
         self._restarted = False           # the game's Auto Retry already started the next match
         self._end_stage = None            # the highest stage read in the match that just ended
+        self._buy_fail_saved = False      # one "no Buy button" screenshot per match
+        self._watched_from_start = False  # False when a match was picked up already running
 
     def _phase(self, text, color="#4fc3f7"):
         if self.set_phase:
@@ -439,6 +449,7 @@ class HalloweenRunner:
         if not ensure_autoplay_enabled():
             print(f"[{TAG}] WARNING: couldn't find the Auto Play button - carrying on.")
         self._match_started_at = time.time()
+        self._watched_from_start = False  # the boss may have been bought before this look
         return "IN_MATCH"
 
     # --- before the match -----------------------------------------------------------------
@@ -460,6 +471,7 @@ class HalloweenRunner:
         SESSION.match_started()
         self._match_started_at = time.time()
         self._last_result = None
+        self._watched_from_start = True
         return True
 
     # --- the Final Boss ----------------------------------------------------------------------
@@ -495,7 +507,7 @@ class HalloweenRunner:
             shot = capture_screen()
             card = _find(config.HALLOWEEN_FINAL_BOSS_TITLE, shot)
             if card:
-                return card
+                return self._with_buy_in_view(card)
             panel_open = _find_any(_CLOSES, shot)[0] is not None
             if not panel_open:
                 forge = _find(config.HALLOWEEN_FORGE_BTN, shot)
@@ -510,10 +522,30 @@ class HalloweenRunner:
                     continue                 # the panel didn't open - click Forge again
             card = self._find_card()
             if card:
-                return card
+                return self._with_buy_in_view(card)
             return None                      # the Forge is open but the card isn't in it
         print(f"[{TAG}] The Forge didn't open after {FORGE_OPEN_TRIES} clicks.")
         return None
+
+    @staticmethod
+    def _with_buy_in_view(card):
+        """The card, scrolled so its Buy is inside the Forge's list. None if it can't be."""
+        scrolls = 0
+        while card[1] + BUY_DY > FORGE_BUY_MAX_Y:
+            if config.STOP_REQUESTED or scrolls >= FORGE_BUY_SCROLLS:
+                return None
+            scrolls += 1
+            scroll_maps_right(hover=FORGE_HOVER, notches=FORGE_SCROLL_NOTCHES)
+            found = _find(config.HALLOWEEN_FINAL_BOSS_TITLE)
+            if found is None:
+                time.sleep(0.3)              # still sliding - one more look
+                found = _find(config.HALLOWEEN_FINAL_BOSS_TITLE)
+            if found is None:
+                return None
+            card = found
+        if scrolls:
+            print(f"[{TAG}] The Final Boss's Buy was below the list - scrolled it into view.")
+        return card
 
     def _buy_final_boss(self):
         """Forge -> the Final Boss card -> its Buy -> close. True if Buy was clicked."""
@@ -524,6 +556,15 @@ class HalloweenRunner:
             print(f"[{TAG}] Couldn't get to the Final Boss card (screen saved: {path}).")
             return False
         point, recognised = _buy_point(capture_screen(), card)
+        if not recognised and not _buy_is_green(capture_screen(), point):
+            # Nothing says a Buy is there, so nothing gets clicked: a blind click can land on
+            # the unit bar. Returning False tries the whole buy again after BUY_FAIL_COOLDOWN.
+            if not self._buy_fail_saved:
+                self._buy_fail_saved = True
+                path = health.save_debug_screenshot("halloween_no_buy_button")
+                print(f"[{TAG}] The Final Boss's Buy isn't where it should be (screen saved: {path}) - not "
+                      f"clicking, trying again in {BUY_FAIL_COOLDOWN:.0f}s.")
+            return False
         if recognised and not _buy_is_green(capture_screen(), point):
             # Grey for a moment longer than the counter (or the candy isn't in yet).
             deadline = time.time() + BUY_GREEN_WAIT
@@ -566,10 +607,12 @@ class HalloweenRunner:
     # --- the match ------------------------------------------------------------------------
     def play_match(self):
         """
-        Buys the Final Boss at BOSS_STAGE, then waits for the end - the end screen, or (the game's
-        Auto Retry on) the stage starting over. "ENDED" / False / "RECONNECTED".
+        Buys the Final Boss at the picked Heat, then waits for the end - the end screen, or (the
+        game's Auto Retry on) the stage starting over. "ENDED" / False / "RECONNECTED".
         """
-        self._phase(f"WAITING FOR STAGE {BOSS_STAGE}", "#4fc3f7")
+        boss_heat = self.boss_heat
+        self._phase(f"WAITING FOR HEAT {boss_heat}", "#4fc3f7")
+        self._buy_fail_saved = False
         if getattr(self, "_learner", None) is None:
             self._learner = StageLearner()
         learner = self._learner
@@ -577,7 +620,7 @@ class HalloweenRunner:
         bought_at = [0.0]
         bought_stage = [None]
         next_try = [0.0]
-        reads = [0]                       # looks at BOSS_STAGE or later
+        reads = [0]                       # looks at the picked Heat or later
         down_looks = [0]                  # looks in a row below the highest stage this match
         highest = [0]
         prev_n = [None]
@@ -587,43 +630,18 @@ class HalloweenRunner:
         start_looks = [0]
         last_start_press = [0.0]
         lower_after_buy = [0]             # reads below the bought stage since the last read at/above it
-        pre_reads = [0]                   # looks at the stage before the boss's
-        forge_card = [None]               # the boss card while the Forge is held open (pre-open)
-        card_lost = [0]
-        preopen_next = [0.0]
 
         def bought(stage_now):
             bought_at[0] = time.time()
             bought_stage[0] = stage_now
             highest[0] = max(highest[0], stage_now or 0)
             lower_after_buy[0] = 0
-            forge_card[0] = None
 
         def buy(stage_now):
             if self._buy_final_boss():
                 bought(stage_now)
             else:
                 next_try[0] = time.time() + BUY_FAIL_COOLDOWN
-
-        def preopen_watch(shot, n):
-            """Forge held open on the boss card: Buy clicked the moment it's green. True if bought."""
-            card = _find_near(shot, config.HALLOWEEN_FINAL_BOSS_TITLE, forge_card[0][:2], PREOPEN_CARD_REACH)
-            if card is None:
-                card_lost[0] += 1
-                if card_lost[0] >= PREOPEN_LOST_LOOKS:
-                    print(f"[{TAG}] The Forge closed - opening it again.")
-                    forge_card[0] = None
-                return False
-            card_lost[0] = 0
-            forge_card[0] = card
-            point, recognised = _buy_point(shot, card)
-            if recognised and _buy_is_green(shot, point):
-                print(f"[{TAG}] The Final Boss's Buy turned green - buying it now.")
-                self._phase("BUYING THE FINAL BOSS", "#f9a825")
-                self._click_buy(point)
-                bought(n if n is not None and n >= BOSS_STAGE else BOSS_STAGE)
-                return True
-            return False
 
         def watch(shot):
             now = time.time()
@@ -655,7 +673,7 @@ class HalloweenRunner:
             if n is not None:
                 last_read[0] = now
                 if n != last_stage[0]:
-                    print(f"[{TAG}] Stage {n} (read {conf:.2f}).")
+                    print(f"[{TAG}] Heat {n} (read {conf:.2f}).")
                     last_stage[0] = n
                 # Lower than the highest stage seen (read twice in a row, so one misread can't
                 # set it): the game started the stage over.
@@ -668,8 +686,8 @@ class HalloweenRunner:
             elif not unreadable_saved[0] and now - last_read[0] >= STAGE_UNREADABLE_AFTER:
                 unreadable_saved[0] = True
                 path = health.save_debug_screenshot("halloween_stage_unreadable", shot)
-                print(f"[{TAG}] Can't read the stage number (screen saved: {path}) - still watching for the "
-                      f"Stage_{BOSS_STAGE} picture too.")
+                print(f"[{TAG}] Can't read the Heat number (screen saved: {path}) - still watching for the "
+                      f"Heat {boss_heat} picture too.")
 
             if bought_at[0]:
                 # Back below the stage it was bought at: that match ended and the next one is
@@ -677,7 +695,7 @@ class HalloweenRunner:
                 if n is not None and bought_stage[0] is not None:
                     lower_after_buy[0] = lower_after_buy[0] + 1 if n < bought_stage[0] else 0
                     if lower_after_buy[0] >= STAGE_LOWER_AFTER_BUY:
-                        print(f"[{TAG}] Stage {n} after buying the Final Boss at stage {bought_stage[0]} - "
+                        print(f"[{TAG}] Heat {n} after buying the Final Boss at Heat {bought_stage[0]} - "
                               f"that match is over and the next one is running.")
                         return "RESTARTED"
                 # Bought once - never again this match (the stages carry on after the buy).
@@ -685,59 +703,54 @@ class HalloweenRunner:
 
             if now < next_try[0]:
                 return None
-            # Pre-open: the Forge on the boss card from the stage before, Buy clicked when green.
-            if forge_card[0] is not None:
-                if preopen_watch(shot, n):
-                    return None
-            elif now >= preopen_next[0]:
-                if n is not None:
-                    pre_reads[0] = pre_reads[0] + 1 if n == BOSS_STAGE - 1 else 0
-                if pre_reads[0] >= STAGE_READS_NEEDED:
-                    pre_reads[0] = 0
-                    print(f"[{TAG}] Stage {n} - opening the Forge on the Final Boss to buy it the moment it "
-                          f"unlocks.")
-                    self._phase("FORGE OPEN - WAITING FOR THE BOSS", "#f9a825")
-                    card = self._open_forge_and_find_card()
-                    if card:
-                        forge_card[0], card_lost[0] = card, 0
-                    else:
-                        print(f"[{TAG}] Couldn't hold the Forge open on the Final Boss - it'll be bought at stage "
-                              f"{BOSS_STAGE} as usual.")
-                        self._close_forge()
-                        preopen_next[0] = time.time() + 30.0
-                    return None
-            # The boss stage's picture too (the whole circle - only while it's the colour it was cut in).
-            picture = _find_near(shot, config.HALLOWEEN_BOSS_STAGE_PIC,
-                                 (config.HALLOWEEN_STAGE_X, config.HALLOWEEN_STAGE_Y), config.HALLOWEEN_STAGE_REACH)
+            # The picked Heat's picture (the whole circle) only when the digit can't be read: with
+            # three look-alike circles to choose from, a digit that was read has the last word.
+            picture = None
+            if n is None:
+                picture = _find_near(shot, config.HALLOWEEN_HEAT_PICS[boss_heat],
+                                     (config.HALLOWEEN_STAGE_X, config.HALLOWEEN_STAGE_Y), config.HALLOWEEN_STAGE_REACH)
             # An unreadable look (a popup over the counter, an effect) neither counts nor resets.
-            if (n is not None and n >= BOSS_STAGE) or picture:
+            if (n is not None and n >= boss_heat) or picture:
                 reads[0] += 1
             elif n is not None:
                 reads[0] = 0
             if reads[0] >= STAGE_READS_NEEDED:
-                print(f"[{TAG}] Stage {n or BOSS_STAGE} reached ("
+                print(f"[{TAG}] Heat {n or boss_heat} reached ("
                       f"{'picture ' + format(picture[2], '.2f') if picture else 'digit ' + format(conf, '.2f')}) - "
                       f"buying the Final Boss.")
                 reads[0] = 0
-                buy(n if n is not None else BOSS_STAGE)
+                buy(n if n is not None else boss_heat)
             return None
 
-        print(f"[{TAG}] Waiting for stage {BOSS_STAGE}...")
+        print(f"[{TAG}] Waiting for Heat {boss_heat}...")
         result = poll_until([target(config.VICTORY_TEXT, "VICTORY", debug_label="victory"),
                              target(config.DEFEAT_TEXT, "DEFEAT", debug_label="defeat")],
                             interval=1.0, label="halloween_match", stuck_timeout=self._stuck_timeout(),
                             custom_check=watch, lobby_grace=8.0, game_results=False)
         self._end_stage = highest[0] or None
+        if config.STUCK_DETECTED:
+            print(f"[{TAG}] When it stopped: highest stage read {highest[0] or 'none'}, last read "
+                  f"{last_stage[0] if last_stage[0] is not None else 'none'}, Final Boss "
+                  f"{'bought' if bought_at[0] else 'not bought'}, watched for {time.time() - started:.0f}s.")
         if result in (False, "RECONNECTED"):
             return result
         if result == "RESTARTED":
-            # Auto Retry: the end screen came and went between looks. The boss ends the run, so
-            # with it bought the match was won; without it the result is unknown.
+            # Auto Retry: the end screen came and went between looks, so neither result was
+            # seen. The boss ends the run, so with it bought this counts as a win. Without it
+            # the run can only have ended by losing - unless the match was picked up part way
+            # (the boss may have been bought before that) or it ended too soon to be a match.
             print(f"[{TAG}] That match is over and the next one has started - watching it from the start.")
             self._restarted = True
-            if bought_at[0] and not self._count("VICTORY"):
-                return False
-            return "ENDED"
+            if bought_at[0]:
+                print(f"[{TAG}] Result screen not seen - counted as a win because the Final Boss was bought.")
+                result = "VICTORY"
+            elif self._watched_from_start and time.time() - started >= MIN_MATCH_FOR_DEFEAT:
+                print(f"[{TAG}] Result screen not seen - counted as a defeat because the match ended "
+                      f"before the Final Boss was bought.")
+                result = "DEFEAT"
+            else:
+                return "ENDED"               # unknown: counted as neither
+            return "ENDED" if self._count(result) else False
         if result == "SCREEN":
             result = self._read_result()
         if not self._count(result):
@@ -867,4 +880,5 @@ class HalloweenRunner:
             print(f"[{TAG}] WARNING: couldn't find the Auto Play button - carrying on.")
         SESSION.match_started()
         self._match_started_at = time.time()
+        self._watched_from_start = True
         return "IN_MATCH"

@@ -1892,19 +1892,19 @@ class BotEngine:
                    f"(or the limit warning on the reward) it walks to the NPC on Flaming Monastery with "
                    f"'{walk_preset_name}' and turns them in. The game's Auto Start and Auto Retry must be OFF.")
 
-    def run_halloween(self):
+    def run_halloween(self, boss_heat=5):
         """
         Halloween Event (Events page, LIMITED): the event stage on Auto Play, the Final Boss
-        bought from the Forge at stage 5, Repeat Stage - the shared runner loop with
+        bought from the Forge at the picked Heat, Repeat Stage - the shared runner loop with
         modules/halloween.py's runner.
         """
         from modules.halloween import HalloweenRunner
         return self.run_monster_clash(
             "farm", None, _label="Halloween Event",
-            _runner_factory=lambda sp: HalloweenRunner(set_phase=sp),
-            _intro="Halloween Event - the event stage on Auto Play; at stage 5 it buys the Final Boss from the Forge, "
-                   "then Repeat Stage (or carries on when the game's Auto Retry restarted it). Auto Start and Auto "
-                   "Retry can be on or off.")
+            _runner_factory=lambda sp: HalloweenRunner(set_phase=sp, boss_heat=boss_heat),
+            _intro=f"Halloween Event - the event stage on Auto Play; at Heat {boss_heat} it buys the Final Boss from the "
+                   f"Forge, then Repeat Stage (or carries on when the game's Auto Retry restarted it). Auto Start and "
+                   f"Auto Retry can be on or off.")
 
     def _supervised_run(self, target, args):
         """

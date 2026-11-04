@@ -562,7 +562,8 @@ class SettingsSheet(FloatingDialog):
 
         sec_pc = _Section("THIS PC")
         sec_pc.col.addWidget(label("Older PCs run Roblox with fewer frames, and a click that's too quick can be "
-                                   "missed. Auto measures this PC and waits longer only when it needs to.",
+                                   "missed. Auto measures this PC and, only when it needs to, waits longer and "
+                                   "checks the screen less often to leave Roblox more CPU.",
                                    "muted", wrap=True))
         speed = Segmented([("auto", "Auto"), ("on", "Slow PC mode"), ("off", "Fast PC")],
                           self.s.get("slow_pc_mode", "auto"))

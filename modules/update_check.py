@@ -78,6 +78,7 @@ def check_for_update():
         return {"version": display, "url": data.get("html_url") or "",
                 "notes": (data.get("body") or "").strip(),
                 "download_url": asset[1].get("browser_download_url") if asset else None,
-                "size": asset[1].get("size") if asset else 0}
+                "size": asset[1].get("size") if asset else 0,
+                "digest": asset[1].get("digest") if asset else None}
     except Exception:
         return None
