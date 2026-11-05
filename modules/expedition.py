@@ -120,6 +120,7 @@ _MODE_CARD_ANCHORS = {
     "story": {"template": config.STORY_CARD, "enabled": True},
     "raid": {"template": config.RAID_CARD, "enabled": True},
     "challenge": {"template": config.CHALLENGE_CARD, "enabled": True},
+    "bossrush": {"template": config.BOSSRUSH_CARD, "enabled": True},
 }
 
 

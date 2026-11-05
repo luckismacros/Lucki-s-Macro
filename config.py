@@ -31,14 +31,26 @@ AUTOCLICKER_DEFAULT_INTERVAL = 2.0
 # just under the global. Anything absent uses whatever the caller passed.
 #   Example: TEMPLATE_THRESHOLDS = {VICTORY_TEXT: 0.92, AVAILABLE_IN_TEXT: 0.78}
 TEMPLATE_THRESHOLDS = {
-    # The Challenge card slides as its list settles, so its confidence oscillates
-    # instead of holding still. Measured across a real session it sat at 0.803, 0.827,
-    # 0.836, 0.842, 0.843, 0.845 while plainly on screen, only occasionally crossing
-    # the 0.85 default - which is why it took ~10s and ~20 polls to catch, then worked
-    # fine. When the card is genuinely absent it scores 0.165-0.182, so the gap between
-    # present and absent is enormous and 0.78 sits safely in the middle: well clear of
-    # the lowest real sighting, nowhere near a false positive.
-    "assets/templates/challenge_card.png": 0.78,
+    # The Challenge and Expedition card titles. The game changes the art behind them, and the
+    # old crops had enough of it in them to fall to 0.79 and 0.70 on the 2026-11 card screen,
+    # against bars of 0.78 and 0.85: "the macro can't select these modes". Re-cut from a
+    # 1919-wide capture and rescaled (originals in _original_1919x1079/), cut close to the
+    # letters so the art counts less: 0.86-0.96 on four different backgrounds, up to 0.42
+    # anywhere else. Those frames were rescaled too. Rescaled text against the real 1600x900
+    # render scores lower (Boss Rush below: 0.63-0.68), so the bar leaves room for that. A
+    # Locked Expedition card also clears it, then the next step fails with a screenshot.
+    # Replace with crops taken at 1600x900 (tools/template_capture.py) when possible.
+    "assets/templates/challenge_card.png": 0.60,
+    "assets/templates/expeditions/Expeditions_Card.png": 0.60,
+    # The Challenges panel's category titles, rescaled the same way: 0.91-0.99 on the 2026-11
+    # panel, 0.56 at most on each other's titles. A miss only falls back to the fixed point.
+    "assets/templates/challenge_regular.png": 0.60,
+    "assets/templates/challenge_daily.png": 0.60,
+    "assets/templates/challenge_weekly.png": 0.60,
+    # "Available in" on a challenge on cooldown: 0.825 on the 2026-11 screen against the 0.85
+    # default, so a cooldown could go unnoticed and the run stopped waiting for Select Stage.
+    # 0.56 on the slot list, so 0.72 sits clear of both.
+    "assets/templates/available_in.png": 0.72,
 
     # Boss Rush card, rescaled down from a 1919-wide capture (see BOSSRUSH_DIR): shrunk
     # text can't score like a same-size capture (see tools/retemplate.py). Measured live
@@ -945,10 +957,14 @@ CHALLENGE_START_AFTER_MATCH_Y = 588
 CHALLENGE_LOOP_WAIT_SECONDS = 60.0
 
 CHALLENGE_CATEGORIES = {
-    "regular": {"label": "Regular Challenge", "x": 384, "y": 257},
-    "daily":   {"label": "Daily Challenge",   "x": 384, "y": 394},
-    "weekly":  {"label": "Weekly Challenge",  "x": 384, "y": 534},
+    "regular": {"label": "Regular Challenge", "x": 384, "y": 257, "template": "assets/templates/challenge_regular.png"},
+    "daily":   {"label": "Daily Challenge",   "x": 384, "y": 394, "template": "assets/templates/challenge_daily.png"},
+    "weekly":  {"label": "Weekly Challenge",  "x": 384, "y": 534, "template": "assets/templates/challenge_weekly.png"},
 }
+# How far (reference px) a category's title may be from its fixed point and still be trusted.
+# The titles look alike, and less than the gap between two categories (~137) rules out the
+# wrong one.
+CHALLENGE_CATEGORY_REACH = 100
 
 CHALLENGE_SLOTS = {
     "regular_1": {"label": "Regular Challenge 1", "category": "regular", "x": 663, "y": 314},
@@ -1216,6 +1232,10 @@ EXPEDITIONS = {
     "east_town":      {"label": "East Town",      "enabled": True, "material": "mechanical_scrap",
                        "template": f"{EXPEDITION_DIR}/East_Town.png"},
 }
+# On the 2026-11 screen these score 0.87-0.93 against the 0.85 default: too close for the card
+# that's highlighted as selected. The next map along is 0.44 at most, so 0.75 is safe.
+for _exp in EXPEDITIONS.values():
+    TEMPLATE_THRESHOLDS.setdefault(_exp["template"], 0.75)
 
 # "icons" are the small reward icons above map nodes. A node's icon box is tinted by
 # rarity (green, pink, teal, blue...), and colour matching is what keeps Fuel Cell and

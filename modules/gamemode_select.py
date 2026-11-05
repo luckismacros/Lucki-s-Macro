@@ -46,7 +46,10 @@ def _wait_and_click(template_path, step_name, clicks=1, recover_leftover_party=F
         custom_check=custom_check,
     )
     if result == "TIMEOUT":
-        print(f"[{step_name}] TIMEOUT: template not found.")
+        # Saved before any fallback scrolls the screen away: without this picture, a player's
+        # report of "it can't select the mode" says nothing about what was actually showing.
+        path = health.save_debug_screenshot(f"timeout_{step_name}")
+        print(f"[{step_name}] TIMEOUT: template not found (screen saved: {path}).")
         return False
     return result
 
@@ -389,8 +392,40 @@ def click_change_gamemode():
         return False
     return result
 
+# Other mode cards to park the cursor on while scrolling for the Challenge card - see
+# _carousel_anchor().
+_CHALLENGE_CARD_ANCHORS = {
+    "story": {"template": config.STORY_CARD, "enabled": True},
+    "raid": {"template": config.RAID_CARD, "enabled": True},
+    "bossrush": {"template": config.BOSSRUSH_CARD, "enabled": True},
+    "expeditions": {"template": config.EXPEDITIONS_CARD, "enabled": True},
+}
+
+
 def click_challenge_card():
-    return _wait_and_click(config.CHALLENGE_CARD, "click_challenge_card", recover_leftover_party=True)
+    """
+    The Challenge mode card. The card list scrolls and the game adds to it, so a card that
+    isn't in view is scrolled for, the way the Expedition and Boss Rush cards already were.
+    Without this a card off screen just ended the run with a timeout.
+    """
+    result = _wait_and_click(config.CHALLENGE_CARD, "click_challenge_card", recover_leftover_party=True)
+    if result is not False or config.STOP_REQUESTED:
+        return result
+
+    print("[click_challenge_card] Challenge card not found where expected - checking whether it needs "
+          "scrolling into view...")
+    match = _sweep_carousel(config.CHALLENGE_CARD, "click_challenge_card", _CHALLENGE_CARD_ANCHORS, "challenge")
+    if not match:
+        health.report_missing_template(capture_screen(), "click_challenge_card", config.CHALLENGE_CARD)
+        return False
+
+    match = settle_match(config.CHALLENGE_CARD, match, "click_challenge_card") or match
+    x, y, confidence = match
+    print(f"[click_challenge_card] Found the Challenge card at ({x}, {y}) after scrolling, "
+          f"confidence={confidence:.2f} - clicking.")
+    click_at(x, y)
+    time.sleep(0.8)
+    return True
 
 def click_challenge_category(category_key):
     if config.STOP_REQUESTED:
@@ -401,9 +436,25 @@ def click_challenge_category(category_key):
         print(f"[click_challenge_category] Unknown category: '{category_key}'")
         return False
 
+    # Waits for the panel: this used to click the instant after the Challenge card, and on a
+    # slow PC the panel may not be up yet. The fixed point stays as the fallback, so a title
+    # that doesn't match never stops the run.
     target_x, target_y = category_data["x"], category_data["y"]
-    print(f"[click_challenge_category] Clicking '{category_key}' at ({target_x}, {target_y})")
+    template = category_data["template"]
+    label = f"challenge_{category_key}"
+    match = _find_within(template, label)
+    if config.STOP_REQUESTED:
+        return False
+    if match and abs(match[1] - target_y) <= config.CHALLENGE_CATEGORY_REACH:
+        match = settle_match(template, match, label) or match
+        print(f"[click_challenge_category] Found '{category_key}' at ({match[0]}, {match[1]}), "
+              f"confidence={match[2]:.2f} - clicking.")
+        target_x, target_y = match[0], match[1]
+    else:
+        print(f"[click_challenge_category] '{category_key}' title not recognised - clicking its usual "
+              f"place ({target_x}, {target_y}).")
     click_at(target_x, target_y)
+    time.sleep(0.4 * config.SLOWNESS)     # the slot list redraws before the slot click
     return True
 
 def click_challenge_slot(slot_key):
@@ -420,18 +471,16 @@ def click_challenge_slot(slot_key):
     click_at(target_x, target_y)
     return True
 
-def is_challenge_on_cooldown():
-    """True if the 'Available in ...' text is showing instead of the Select Stage button."""
-    screenshot = capture_screen()
-    match = find_template(screenshot, config.AVAILABLE_IN_TEXT, config.MATCH_THRESHOLD, debug_label="available_in")
-    return match is not None
-
 def click_challenge_back():
     if config.STOP_REQUESTED:
         return False
     print(f"[click_challenge_back] Clicking Back at ({config.CHALLENGE_BACK_X}, {config.CHALLENGE_BACK_Y})")
     click_at(config.CHALLENGE_BACK_X, config.CHALLENGE_BACK_Y)
     return True
+
+# After clicking a challenge: how long its screen gets to show "Available in" or Select Stage.
+CHALLENGE_SLOT_SCREEN_WAIT = 6.0
+
 
 def _category_slot_count(category_key):
     return sum(1 for v in config.CHALLENGE_SLOTS.values() if v["category"] == category_key)
@@ -505,9 +554,19 @@ def run_challenge_slot_flow(slot_key, nav_context, previous_category=None):
     if config.STOP_REQUESTED:
         return False
 
-    time.sleep(1.0)  # let the result screen settle before checking for the cooldown text
-    if is_challenge_on_cooldown():
+    # Whichever of the two shows first says which screen this is. A single look after a fixed
+    # wait could come before the screen was drawn on a slow PC, and read as "not on cooldown".
+    state = poll_until(
+        [target(config.AVAILABLE_IN_TEXT, "COOLDOWN", debug_label="available_in"),
+         target(config.SELECT_STAGE_BTN, "READY")],
+        interval=config.POLL_INTERVAL, label="challenge_slot_screen",
+        timeout=CHALLENGE_SLOT_SCREEN_WAIT, stuck_timeout=None,
+    )
+    if state in (False, "RECONNECTED"):
+        return state
+    if state == "COOLDOWN":
         print(f"[run_challenge_slot_flow] '{slot_key}' is on cooldown. Clicking Back.")
+        time.sleep(0.3 * config.SLOWNESS)
         click_challenge_back()
         return "SKIP"
 
