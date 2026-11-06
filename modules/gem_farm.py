@@ -31,7 +31,7 @@ from modules.gamemode_select import click_play, click_map, click_act
 from modules.match_start import click_start_party
 from modules.monster_clash import MonsterClashRunner, FARM
 from modules.reconnect import handle_disconnect_if_present
-from modules.polling import poll_until, target, click_until_gone
+from modules.polling import poll_until, target, click_until_gone, click_stage_button
 from modules.prompts import recover_from_leftover_party
 from modules.raid import _step, STEP_ATTEMPTS
 from modules.stage_player import click_start_game, wait_for_start_game
@@ -179,7 +179,8 @@ class GemFarmRunner(MonsterClashRunner):
             if repeat:
                 state["stage_seen"] = now
                 print("[GemFarm] Repeat Stage is waiting (the game's Auto Retry looks off) - pressing it.")
-                click_until_gone(config.REPEAT_STAGE_BTN, repeat, "gem_farm_repeat", clicks=1)
+                if click_stage_button(config.REPEAT_STAGE_BTN, repeat, "gem_farm_repeat", clicks=1) == "RECONNECTED":
+                    return "RECONNECTED"
             if now - state["stage_seen"] >= OFF_STAGE_LIMIT:
                 return "OFF_STAGE"
             return None

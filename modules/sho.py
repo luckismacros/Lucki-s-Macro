@@ -46,7 +46,7 @@ from input_controller import (anchor_camera, click_at, mark_input, ensure_roblox
 from modules.gamemode_select import (click_play, click_map, _find_within, _sweep_carousel, _carousel_anchor,
                                      _frames_differ, CAROUSEL_STEP_NOTCHES, CAROUSEL_MAX_STEPS)
 from modules.match_start import click_start_party
-from modules.polling import poll_until, target, click_until_gone, settle_match
+from modules.polling import poll_until, target, click_until_gone, settle_match, click_stage_button
 from modules.prompts import recover_from_leftover_party, dismiss_click_anywhere_if_present
 from modules.raid import _step, STEP_ATTEMPTS
 from modules.reconnect import handle_disconnect_if_present
@@ -757,13 +757,15 @@ class ShoRunner:
         return None
 
     # --- after the match ------------------------------------------------------------------
-    def _click_repeat(self):
+    def _click_repeat(self, leave_if_refused=False):
         """ONE click on Repeat Stage once it's settled (a double click can land on View Party)."""
         time.sleep(1.0)
         template, match = _find_any(_REPEATS)
         if not match:
             return True
         print(f"[{TAG}] Clicking Repeat Stage.")
+        if leave_if_refused:
+            return click_stage_button(template, match, "sho_repeat", clicks=1)
         return click_until_gone(template, match, "sho_repeat", clicks=1)
 
     def after_match(self):
@@ -832,11 +834,10 @@ class ShoRunner:
             return result if result in (False, "RECONNECTED") else "LOST"
         if not on_end_screen:
             return "START"
-        if not self._click_repeat():
-            path = health.save_debug_screenshot("sho_repeat_stuck")
-            print(f"[{TAG}] Repeat Stage is still on screen after clicking (screen saved: {path}).")
-            return "LOST"
-        return "START"
+        clicked = self._click_repeat(leave_if_refused=True)
+        if clicked == "RECONNECTED":
+            return clicked
+        return "START" if clicked else "LOST"
 
     # --- the trip to the NPC ----------------------------------------------------------------
     def _to_mode_cards(self):

@@ -52,7 +52,7 @@ from input_controller import anchor_camera, click_at, drag_to
 from modules.gamemode_select import _run_steps
 from modules.monster_clash import MonsterClashRunner, FARM, AT_SPAWN, AT_SPOT, UNKNOWN, _click_through
 from modules.reconnect import handle_disconnect_if_present
-from modules.polling import poll_until, target, click_until_gone
+from modules.polling import poll_until, target, click_until_gone, click_stage_button
 from modules.stage_player import play_preset, wait_for_start_game, click_start_game
 from modules.autoplay import ensure_autoplay_enabled
 from modules.fishing import start_fishing, FishingTicker
@@ -680,7 +680,8 @@ class SharkfangRunner(MonsterClashRunner):
         repeat = _find(config.REPEAT_STAGE_BTN) if reason == "MATCH_OVER" else None
         if repeat:
             print("[Sharkfang] Clicking Repeat Stage.")
-            click_until_gone(config.REPEAT_STAGE_BTN, repeat, "sharkfang_repeat")
+            if click_stage_button(config.REPEAT_STAGE_BTN, repeat, "sharkfang_repeat") == "RECONNECTED":
+                return "RECONNECTED"
             self.position = UNKNOWN          # a finished match may not keep the character where it was
         else:
             result = self._restart()

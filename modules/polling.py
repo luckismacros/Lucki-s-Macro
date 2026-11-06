@@ -58,6 +58,11 @@ SETTLE_TOLERANCE_PX = 2
 # After a click, how long the button gets to disappear before it counts as missed.
 CLICK_GONE_WAIT_SECONDS = 1.5
 
+# Clicks on Repeat Stage / Next Stage before deciding the server has stopped taking them.
+STAGE_BUTTON_CLICKS = 5
+# Leaving such a server: how long the menus get before leaving the game instead.
+NEW_SERVER_LOBBY_WAIT = 90.0
+
 # On a slow PC (config.low_power): the safety checks run on one tick in this many.
 LOW_POWER_SAFETY_EVERY = 3
 # How often a long wait logs its average work per tick.
@@ -117,7 +122,7 @@ def click_until_gone(template, match, label, clicks=1, attempts=3, point=None, s
         print(f"[{label}] Clicking at ({cx}, {cy}), confidence={confidence:.2f}{suffix}.")
         click_at(cx, cy, clicks=clicks)
 
-        deadline = time.time() + CLICK_GONE_WAIT_SECONDS
+        deadline = time.time() + CLICK_GONE_WAIT_SECONDS * config.SLOWNESS
         while time.time() < deadline:
             time.sleep(0.25)
             shot = capture_screen()
@@ -129,6 +134,50 @@ def click_until_gone(template, match, label, clicks=1, attempts=3, point=None, s
             match = still
         print(f"[{label}] Still on screen after the click - it didn't register.")
     print(f"[{label}] Still on screen after {attempts} clicks - moving on.")
+    return False
+
+
+def click_stage_button(template, match, label, clicks=1):
+    """
+    Clicks Repeat Stage or Next Stage, for every mode. A server about to shut down looks normal,
+    with the normal end screen, but ignores these buttons for as long as it has left (it can be
+    many minutes), so button clicks that do nothing are the sign. The only way out is a new server.
+
+    True once the button took. "RECONNECTED" after leaving for a new server: the player is back at
+    the lobby, and every caller already treats that as "redo the navigation", same as a disconnect.
+    False if the run was stopped, or there was no way to leave.
+    """
+    if click_until_gone(template, match, label, clicks=clicks, attempts=STAGE_BUTTON_CLICKS):
+        return True
+    if config.STOP_REQUESTED:
+        return False
+    path = health.save_debug_screenshot(f"{label}_refused")
+    print(f"[{label}] The button does nothing after {STAGE_BUTTON_CLICKS} clicks (screen saved: {path}) - "
+          f"the server may be shutting down.")
+    return leave_for_new_server(label)
+
+
+def leave_for_new_server(label):
+    """
+    Gets off this server: through the menus to the lobby or, if that doesn't work, out of the game
+    and back in through Roblox's home screen. "RECONNECTED" once at the lobby, False otherwise.
+    """
+    from modules.lobby import return_to_lobby   # lazy: lobby imports prompts, which polling also uses
+    from modules import notify
+    from modules.reconnect import leave_and_rejoin, restore_window
+    print(f"[{label}] Going to the lobby for a new server.")
+    notify.send("The stage won't repeat, so this server may be shutting down. Going to the lobby for a new one.",
+                category="problems", title="Changing server", good=None)
+    if return_to_lobby(timeout=NEW_SERVER_LOBBY_WAIT):
+        return "RECONNECTED"
+    if config.STOP_REQUESTED:
+        return False
+    print(f"[{label}] Couldn't reach the lobby through the menus - leaving the game and rejoining.")
+    ok, message = leave_and_rejoin()
+    print(f"[{label}] {message}")
+    if ok:
+        restore_window()
+        return "RECONNECTED"
     return False
 
 

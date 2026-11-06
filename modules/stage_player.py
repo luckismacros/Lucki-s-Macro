@@ -9,7 +9,7 @@ from modules.reconnect import handle_disconnect_if_present
 from modules.prompts import dismiss_click_anywhere_if_present, handle_game_results_if_present
 from modules.fishing import FishingTicker
 from modules.autoclicker import AutoClickerTicker
-from modules.polling import poll_until, target, settle_match, click_until_gone
+from modules.polling import poll_until, target, settle_match, click_until_gone, click_stage_button
 from modules import health
 import config
 
@@ -511,9 +511,8 @@ def wait_for_repeat_stage(click=True, timeout=None):
     that pass a timeout must check for it explicitly.
     """
     print("[Player] Waiting for Repeat Stage button...")
-    return poll_until(
-        [target(config.REPEAT_STAGE_BTN, True, click=click, clicks=2,
-                debug_label="repeat_stage_btn")],
+    result = poll_until(
+        [target(config.REPEAT_STAGE_BTN, True, debug_label="repeat_stage_btn")],
         interval=2.0,
         label="repeat_stage",
         timeout=timeout,
@@ -522,6 +521,13 @@ def wait_for_repeat_stage(click=True, timeout=None):
         stuck_timeout=None if timeout else config.STUCK_TIMEOUT_MENU,
         lobby_grace=8.0,
     )
+    return _click_stage_button(config.REPEAT_STAGE_BTN, "repeat_stage") if click and result is True else result
+
+
+def _click_stage_button(template, label):
+    """Clicks a button a poll just saw, making sure the click took. See polling.click_stage_button()."""
+    match = find_template(capture_screen(), template, config.MATCH_THRESHOLD)
+    return click_stage_button(template, match, label, clicks=2) if match else True
 
 def wait_for_next_stage(timeout=8.0):
     """
@@ -538,14 +544,15 @@ def wait_for_next_stage(timeout=8.0):
     must check for it explicitly (see wait_for_repeat_stage()).
     """
     print("[Player] Waiting for Next Stage button...")
-    return poll_until(
-        [target(config.NEXT_STAGE_BTN, True, click=True, clicks=2, debug_label="next_stage_btn")],
+    result = poll_until(
+        [target(config.NEXT_STAGE_BTN, True, debug_label="next_stage_btn")],
         interval=1.0,
         label="next_stage",
         timeout=timeout,
         stuck_timeout=None,  # already bounded by `timeout`
         lobby_grace=6.0,
     )
+    return _click_stage_button(config.NEXT_STAGE_BTN, "next_stage") if result is True else result
 
 def wait_for_match_result(fishing=False, cast_pos=None, act_key=None, allow_game_results=True):
     """

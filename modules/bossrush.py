@@ -36,7 +36,7 @@ import pydirectinput
 import config
 from vision import capture_screen, find_template, find_all_templates
 from input_controller import click_at, anchor_camera, high_res_timer, mark_input, type_text, ensure_roblox_focus
-from modules.polling import poll_until as _poll_until, target, settle_match, click_until_gone
+from modules.polling import poll_until as _poll_until, target, settle_match, click_until_gone, click_stage_button
 from modules.gamemode_select import click_play, _wait_and_click, _run_steps, _sweep_carousel
 from modules.stage_player import play_preset
 from modules.stats import SESSION
@@ -304,7 +304,8 @@ class BossRushRunner:
                 match = _find(config.REPEAT_STAGE_BTN)
                 if match:
                     print("[BossRush] On the results screen - clicking Repeat Stage.")
-                    click_until_gone(config.REPEAT_STAGE_BTN, match, "bossrush_repeat", clicks=1)
+                    if click_stage_button(config.REPEAT_STAGE_BTN, match, "bossrush_repeat", clicks=1) == "RECONNECTED":
+                        return "RECONNECTED"
                 time.sleep(1.5)
                 continue
             template = config.BOSSRUSH_START_BTN if result == "PARTY_START" else config.BOSSRUSH_SELECT_STAGE_BTN
@@ -1275,8 +1276,9 @@ class BossRushRunner:
         match = _find(config.REPEAT_STAGE_BTN)
         if not match:
             return self._enter_hub()
-        if not click_until_gone(config.REPEAT_STAGE_BTN, match, "bossrush_repeat", clicks=1):
-            return False
+        clicked = click_stage_button(config.REPEAT_STAGE_BTN, match, "bossrush_repeat", clicks=1)
+        if clicked is not True:
+            return clicked
         time.sleep(1.0)
         return self._enter_hub()
 

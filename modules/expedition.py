@@ -44,7 +44,7 @@ import cv2
 import config
 from vision import capture_screen, find_template, _load_template
 from input_controller import click_at, anchor_camera
-from modules.polling import poll_until, target, settle_match, click_until_gone
+from modules.polling import poll_until, target, settle_match, click_until_gone, click_stage_button
 from modules.gamemode_select import click_play, _wait_and_click, _run_steps, _sweep_carousel
 from modules.match_start import click_start_party
 from modules.stage_player import play_preset
@@ -284,13 +284,13 @@ class ExpeditionRunner:
         return "INRUN"
 
     def click_repeat_if_present(self):
-        """True once Repeat Stage is confirmed gone (clicked, or was never there to
-        begin with - nothing to do isn't a failure); False if it's still stuck on
-        screen after every click attempt."""
+        """True once Repeat Stage is confirmed gone (clicked, or was never there to begin with -
+        nothing to do isn't a failure). "RECONNECTED" after leaving a server that wouldn't repeat
+        it. False if neither worked."""
         match = _find(config.EXP_REPEAT_STAGE_BTN)
         if not match:
             return True
-        clicked = click_until_gone(config.EXP_REPEAT_STAGE_BTN, match, "expedition_repeat", clicks=2)
+        clicked = click_stage_button(config.EXP_REPEAT_STAGE_BTN, match, "expedition_repeat", clicks=2)
         time.sleep(1.0)
         return clicked
 

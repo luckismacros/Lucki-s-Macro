@@ -36,7 +36,7 @@ import pydirectinput
 import config
 from vision import capture_screen, find_template
 from input_controller import anchor_camera, click_at, mark_input, ensure_roblox_focus
-from modules.polling import poll_until, target, click_until_gone
+from modules.polling import poll_until, target, click_until_gone, click_stage_button
 from modules.gamemode_select import _run_steps
 from modules.stage_player import play_preset, wait_for_start_game, click_start_game
 from modules.autoplay import ensure_autoplay_enabled
@@ -610,7 +610,8 @@ class MonsterClashRunner:
                 time.sleep(1.0)
                 repeat = _find(config.REPEAT_STAGE_BTN) or repeat
                 print("[MonsterClash] Repeat Stage is up (Auto Retry looks off) - clicking it.")
-                click_until_gone(config.REPEAT_STAGE_BTN, repeat, "monster_clash_repeat", clicks=1)
+                if click_stage_button(config.REPEAT_STAGE_BTN, repeat, "monster_clash_repeat", clicks=1) == "RECONNECTED":
+                    return "RECONNECTED"
                 time.sleep(2.0)
                 continue
             if _find(config.START_GAME_BTN, shot):
@@ -777,11 +778,7 @@ class MonsterClashRunner:
         if not match:
             return True
         print("[MonsterClash] Clicking Repeat Stage.")
-        if not click_until_gone(config.REPEAT_STAGE_BTN, match, "monster_clash_repeat", clicks=1):
-            path = health.save_debug_screenshot("monster_clash_repeat_stuck")
-            print(f"[MonsterClash] Repeat Stage is still on screen after clicking (screen saved: {path}).")
-            return False
-        return True
+        return click_stage_button(config.REPEAT_STAGE_BTN, match, "monster_clash_repeat", clicks=1)
 
     def rift_next(self):
         """

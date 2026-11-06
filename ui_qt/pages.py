@@ -1502,8 +1502,8 @@ class OthersPage(ModePage):
 class EventsPage(ModePage):
     """
     Events - the limited-time events, each removed when its event ends:
-      Halloween - the Halloween Event: the Final Boss bought from the Forge at the Heat picked
-                  here, Repeat Stage - modules/halloween.py.
+      Halloween - the Halloween Event: the Final Boss bought by the Forge's auto-buy, or by the
+                  macro at the Heat picked here, Repeat Stage - modules/halloween.py.
     Sharkfang sat here in 3.7 only and is back on the Others page; settings saved here move
     back (see MainWindow._restore_ui_state and QueuePage.restore).
     """
@@ -1529,9 +1529,16 @@ class EventsPage(ModePage):
         self.halloween_card.body.addWidget(label(
             "Works with the game's Auto Start and Auto Retry on or off - on is faster. The macro joins (Events › "
             "Halloween Event › Select Stage › Start) or picks up a match that's already running, keeps Auto Play on, and "
-            "buys the Final Boss from the Forge at the Heat you pick below. After the match it clicks Repeat Stage, or just "
-            "carries on if the game restarted the stage itself.", "hint", wrap=True))
-        self.halloween_card.body.addWidget(field("Buy the Final Boss at"))
+            "gets the Final Boss bought the way you pick below. After the match it clicks Repeat Stage, or just "
+            "carries on if the game restarted the stage itself. If the server is shutting down and the stage won't "
+            "repeat, it goes to the lobby for a new one.", "hint", wrap=True))
+        self.auto_buy = ToggleRow("Use the Forge's auto-buy (Heat 5)",
+                                  "On: the macro turns on the Final Boss's auto-buy each match and the game buys it at "
+                                  "Heat 5. Off: the macro keeps auto-buy off and buys it at the Heat you pick.", True)
+        self.auto_buy.toggled.connect(self._on_auto_buy)
+        self.halloween_card.body.addWidget(self.auto_buy)
+        self.boss_heat_label = field("Buy the Final Boss at")
+        self.halloween_card.body.addWidget(self.boss_heat_label)
         self.boss_heat = Segmented(self._BOSS_HEATS, self._DEFAULT_BOSS_HEAT)
         self.boss_heat.changed.connect(self.emit_changed)
         self.halloween_card.body.addWidget(self.boss_heat)
@@ -1543,27 +1550,43 @@ class EventsPage(ModePage):
     def _on_mode(self, *_):
         mode = self.mode.value()
         self.halloween_card.setVisible(mode == "halloween")
+        self._on_auto_buy()
+
+    def _on_auto_buy(self, *_):
+        # Auto-buy buys as soon as it can, so a Heat to pick only exists without it.
+        manual = not self.auto_buy.isChecked()
+        self.boss_heat_label.setVisible(manual)
+        self.boss_heat.setVisible(manual)
         self.emit_changed()
+
+    def _boss_heat(self):
+        return int(self._DEFAULT_BOSS_HEAT if self.auto_buy.isChecked() else self.boss_heat.value())
 
     def checks(self):
         return [("Units", "ok", "the game's Auto Play")]
 
     def run_spec(self):
-        heat = int(self.boss_heat.value())
-        return "run_halloween", (heat,), [("Gamemode", "Halloween Event"), ("Boss", f"Final Boss at Heat {heat}")]
+        heat, auto = self._boss_heat(), self.auto_buy.isChecked()
+        boss = "Forge auto-buy at Heat 5" if auto else f"macro buys at Heat {heat}"
+        return "run_halloween", (heat, auto), [("Gamemode", "Halloween Event"), ("Boss", f"Final Boss - {boss}")]
 
     def summary(self):
+        if self.auto_buy.isChecked():
+            return "Halloween Event - Final Boss by the Forge's auto-buy, Repeat Stage"
         return f"Halloween Event - Final Boss at Heat {self.boss_heat.value()}, Repeat Stage"
 
     def state(self):
-        return {"mode": self.mode.value(), "boss_heat": self.boss_heat.value()}
+        return {"mode": self.mode.value(), "boss_heat": self.boss_heat.value(), "auto_buy": self.auto_buy.isChecked()}
 
     def restore(self, data):
         if data.get("mode") in dict(self._MODES):
             self.mode.set_value(data["mode"], animate=False)
         # Settings and queue steps saved before this choice existed have no Heat: the default.
         heat = str(data.get("boss_heat", self._DEFAULT_BOSS_HEAT))
-        self.boss_heat.set_value(heat if heat in dict(self._BOSS_HEATS) else self._DEFAULT_BOSS_HEAT, animate=False)
+        heat = heat if heat in dict(self._BOSS_HEATS) else self._DEFAULT_BOSS_HEAT
+        self.boss_heat.set_value(heat, animate=False)
+        # Saved before auto-buy existed: a later Heat was a deliberate choice, so it stays a macro buy.
+        self.auto_buy.setChecked(bool(data.get("auto_buy", heat == self._DEFAULT_BOSS_HEAT)))
         self._on_mode()
 
 

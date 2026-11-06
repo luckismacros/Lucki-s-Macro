@@ -26,7 +26,7 @@ import time
 import config
 from vision import capture_screen, find_template
 from input_controller import anchor_camera, click_at
-from modules.polling import poll_until, target, click_until_gone
+from modules.polling import poll_until, target, click_until_gone, click_stage_button
 from modules.gamemode_select import click_play, click_raid, click_raid_difficulty
 from modules.match_start import click_raid_start
 from modules.prompts import recover_from_leftover_party, dismiss_click_anywhere_if_present
@@ -471,13 +471,15 @@ class RaidRunner:
         return "ENDED"
 
     # --- after the match ------------------------------------------------------------------
-    def _click_repeat(self):
+    def _click_repeat(self, leave_if_refused=False):
         """ONE click on Repeat Stage once it's settled (a double click can land on View Party)."""
         time.sleep(1.0)
         match = _find(config.REPEAT_STAGE_BTN)
         if not match:
             return True
         print("[Raid] Clicking Repeat Stage.")
+        if leave_if_refused:
+            return click_stage_button(config.REPEAT_STAGE_BTN, match, "raid_repeat", clicks=1)
         return click_until_gone(config.REPEAT_STAGE_BTN, match, "raid_repeat", clicks=1)
 
     def after_match(self):
@@ -523,11 +525,10 @@ class RaidRunner:
         if result in (False, "RECONNECTED"):
             return result
         if result == "REPEAT":
-            if not self._click_repeat():
-                path = health.save_debug_screenshot("raid_repeat_stuck")
-                print(f"[Raid] Repeat Stage is still on screen after clicking (screen saved: {path}).")
-                return "LOST"
-            return "START"
+            clicked = self._click_repeat(leave_if_refused=True)
+            if clicked == "RECONNECTED":
+                return clicked
+            return "START" if clicked else "LOST"
         if result == "PARTY":
             # A stray click opened the party screen - starting from it is the same raid.
             print("[Raid] Ended up on the party screen - starting the raid from there.")

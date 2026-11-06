@@ -100,6 +100,20 @@ def _at_roblox_home(shot):
     return bool(_find(shot, config.ROBLOX_HOME_BTN) or _find(shot, config.ROBLOX_SEARCH_BAR))
 
 
+def restore_window():
+    """
+    Puts Roblox back where the run had it. It can come back at another size after its home screen,
+    and then every picture and click is off. A failure is only reported: the run carries on.
+    """
+    if config.CLIENT_SIZE is None:
+        return
+    try:
+        input_controller.pin_roblox_borderless(config.CLIENT_SIZE[0], config.CLIENT_SIZE[1],
+                                                config.CLIENT_ORIGIN[0], config.CLIENT_ORIGIN[1])
+    except Exception as e:
+        print(f"[Reconnect] Couldn't put the Roblox window back in place: {e}")
+
+
 def leave_and_rejoin():
     """
     A full reset (the Discord /reset command, and Never Stop's last resort): get out of the
@@ -239,6 +253,7 @@ def handle_disconnect_if_present(screenshot):
                         category="problems", title="Rejoining the game", good=None,
                         image_bytes=health.jpg_bytes(current_shot))
             if rejoin_via_home():
+                restore_window()
                 stats.SESSION.disconnect()
                 down_for = stats.format_duration(time.time() - started_at)
                 print(f"[Reconnect] Rejoined! Back at the lobby after {down_for}.")
@@ -258,6 +273,7 @@ def handle_disconnect_if_present(screenshot):
                 _find(current_shot, config.ROBLOX_HOME_BTN) or _find(current_shot, config.ROBLOX_SEARCH_BAR)):
             # Thrown out to Roblox's home screen with no popup at all: rejoin from here.
             if rejoin_via_home():
+                restore_window()
                 stats.SESSION.disconnect()
                 print("[Reconnect] Rejoined from Roblox's home screen.")
                 return True

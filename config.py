@@ -139,7 +139,10 @@ TEMPLATE_THRESHOLDS = {
     # false reconnect_btn is the expensive one, since it makes the loop abandon a
     # live match to "reconnect" from a disconnect that never happened.
     "assets/templates/play_small.png": 0.85,
-    "assets/templates/reconnect_btn.png": 0.85,
+    # Roblox's own Reconnect button scored 0.829 on a real "Disconnected" popup (live 2026-11-06,
+    # error 277) against 0.85, so it sat there unclicked until the run gave up after 10 minutes.
+    # 0.78 catches that and stays clear of the 0.732 false positive above.
+    "assets/templates/reconnect_btn.png": 0.78,
 }
 
 # Templates that must look like an ACTUAL rendering of the button, not merely the
@@ -1714,10 +1717,14 @@ HALLOWEEN_HEAT_PICS = {heat: f"{HALLOWEEN_DIR}/Stage_{heat}.png" for heat in (5,
 HALLOWEEN_STAGE_X, HALLOWEEN_STAGE_Y = 571, 89                     # where that circle sits (reference px)
 HALLOWEEN_STAGE_REACH = 70                                         # how far around it to look
 HALLOWEEN_FORGE_BTN = f"{HALLOWEEN_DIR}/Forge.png"                  # bottom middle, above the money
-# The Forge's Final Boss card: the whole card, and its top (icon, name, text) - the top alone
-# stays the same whether its Buy button can be pressed or not.
+# The Forge's Final Boss card: the whole card, and its name and text. Just those two, because the
+# "Forging" label covers the top of the picture: with the picture in, the card fell to 0.77 against
+# a 0.75 bar while forging (live 2026-11-06). 0.82-1.00 now, and 0.43 at most on other cards.
 HALLOWEEN_FINAL_BOSS_CARD = f"{HALLOWEEN_DIR}/Final_Boss_Card.png"
 HALLOWEEN_FINAL_BOSS_TITLE = f"{HALLOWEEN_DIR}/Final_Boss_Title.png"
+# "Forging" over the card once it's bought. Cut from a live 1600x900 frame; only the word, because
+# the countdown beside it changes. 0.97 or better on 30 frames, 0.50 at most without it.
+HALLOWEEN_FORGING_TEXT = f"{HALLOWEEN_DIR}/Forging.png"
 # "Buy 500" - every card has one, so it's only ever looked for below the Final Boss card's top.
 HALLOWEEN_BUY_BTN = f"{HALLOWEEN_DIR}/Buy_Card.png"
 # The same Buy before the boss can be bought (grey below Heat 5). Shape-wise the two match each

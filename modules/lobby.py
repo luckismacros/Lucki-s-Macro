@@ -17,7 +17,8 @@ from modules.prompts import dismiss_click_anywhere_if_present, handle_game_resul
 from modules import health
 from modules.gamemode_select import click_view_party, click_change_gamemode
 
-RESULT_SCREEN_TEMPLATES = ("VICTORY_TEXT", "DEFEAT_TEXT", "REPEAT_STAGE_BTN", "NEXT_STAGE_BTN", "PORTAL_SELECT_BTN")
+RESULT_SCREEN_TEMPLATES = ("VICTORY_TEXT", "DEFEAT_TEXT", "REPEAT_STAGE_BTN", "NEXT_STAGE_BTN", "PORTAL_SELECT_BTN",
+                           "HALLOWEEN_REPEAT_STAGE_BTN", "EXP_REPEAT_STAGE_BTN", "SHO_REPEAT_STAGE_BTN")
 
 # next_mode -> the card that shows once the mode-card chooser is up. Used to
 # recognise that the chooser is ALREADY open (reached via Change Gamemode - see

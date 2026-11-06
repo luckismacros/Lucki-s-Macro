@@ -16,6 +16,11 @@ Fallbacks:
   - The Final Boss's Buy is only looked for under the Final Boss card's own top: every card
     in the Forge has the same "Buy 500" button.
   - The card not in view after Forge: scrolled down a little at a time, then back up.
+  - Auto-buy (2026-11-06): every Forge card has its own auto-buy button, and the game buys that
+    card when it can until the connection drops. With the player's auto-buy option on, the Final
+    Boss's is turned on at the start of every match, and only that card's. If the Heat goes past
+    5 and the match is still running, the Forge is checked and the macro buys it if the game
+    didn't. With the option off, the button is kept off and the macro buys at the picked Heat.
   - The boss is bought ONCE per match. Since the 2026-11-03 patch the stages keep
     going after the buy and the match can run a long time, so neither the stage going up nor
     a long wait means the buy failed - re-buying only threw candy away (live 2026-11-03: it
@@ -49,7 +54,7 @@ from input_controller import click_at, scroll_maps_left, scroll_maps_right
 from modules.monster_clash import _click_through
 from modules.gamemode_select import _run_steps
 from modules.match_start import click_start_party
-from modules.polling import poll_until, target, click_until_gone
+from modules.polling import poll_until, target, click_until_gone, click_stage_button
 from modules.reconnect import handle_disconnect_if_present
 from modules.stage_player import wait_for_start_game, click_start_game
 from modules.autoplay import ensure_autoplay_enabled
@@ -71,21 +76,33 @@ FORGE_SCROLL_NOTCHES = 3
 FORGE_SCROLL_STEPS = 8
 # Where the cursor goes to scroll the Forge (the middle of the screen, over its cards).
 FORGE_HOVER = (800, 450)
-# The Buy button's centre below the Final Boss card's top crop (reference px).
-BUY_DY = 141
-BUY_REACH = 110        # wider than the button (169 px) - the area has to hold it whole
-# The Forge's list ends at y=726, so a Buy centred lower than this is cut off. The card's top
-# can match while it sits at the list's bottom edge (live 2026-11-04: y=702), which put Buy at
-# y=843 - on the unit bar, so "clicking where it should be" picked up a unit instead.
+# Where the card's buttons sit, from the centre of its name-and-text crop (reference px). Each
+# card has a narrow Buy and, beside it, its own auto-buy button (added 2026-11-06).
+BUY_DX, BUY_DY = -28, 78
+AUTO_DX, AUTO_DY = 65, 78
+# The Forge's list ends at y=726, so a Buy centred lower than this is cut off. A blind click at
+# that edge landed on the unit bar (live 2026-11-04) and picked up a unit instead.
 FORGE_BUY_MAX_Y = 695
 # Extra scrolls to bring a Buy that's below the list's edge into view.
 FORGE_BUY_SCROLLS = 3
-# Buy is green (can be bought) when this share of its pixels is clearly green: 0.76 on the
-# green capture, 0.00 on the grey one.
+# Buy is green (can be bought) when this share of its pixels is clearly green: 0.63 on a green
+# button, 0.00 on a grey one.
 BUY_GREEN_SHARE = 0.35
-BUY_HALF_W, BUY_HALF_H = 70, 15     # the area measured around the button's centre (ref px)
-# With Buy still grey at the picked Heat: how long to give it to turn green before clicking anyway.
+BUY_HALF_W, BUY_HALF_H = 55, 15     # the area measured around the button's centre (ref px)
+# With Buy still grey at the picked Heat: how long to give it to turn green before trying later.
 BUY_GREEN_WAIT = 5.0
+# The auto-buy button is teal while on (with a number on it) and dark grey while off: 0.50 of
+# its pixels are teal when on, 0.00 when off, measured on live frames at any Heat.
+AUTO_HALF = 20
+AUTO_ON_SHARE = 0.25
+AUTO_OFF_SHARE = 0.05
+AUTO_TOGGLE_TRIES = 3
+# "Forging" over the card means the boss is already paid for, whoever bought it.
+FORGING_DY = -165
+FORGING_REACH = 60
+# Setting auto-buy when a match begins: how often to try while the Forge isn't reachable yet.
+AUTO_SET_RETRY = 15.0
+AUTO_SET_TRIES = 5
 # Bought, then the stage read lower than the stage bought at this many times (not necessarily
 # in a row - unreadable looks in between don't matter): that match is over and the next one
 # is running (the end screen was missed). Counted from the buy; a read at or above the bought
@@ -310,14 +327,34 @@ def _buy_is_green(shot, point):
     return float(((g - np.maximum(r, b)) > 40).mean()) >= BUY_GREEN_SHARE
 
 
-def _buy_point(shot, card):
-    """The Final Boss's Buy centre under its card (green or grey - either look finds it)."""
-    guess = (card[0], card[1] + BUY_DY)
-    for template in (config.HALLOWEEN_BUY_BTN, config.HALLOWEEN_GREY_BUY_BTN):
-        found = _find_near(shot, template, guess, BUY_REACH)
-        if found:
-            return (found[0], found[1]), True
-    return guess, False
+def _buy_point(card):
+    """The centre of the Final Boss's Buy, from its card. Every card's Buy looks the same."""
+    return card[0] + BUY_DX, card[1] + BUY_DY
+
+
+def _auto_point(card):
+    """The centre of the Final Boss's own auto-buy button. Taken from its card, so it can't be another's."""
+    return card[0] + AUTO_DX, card[1] + AUTO_DY
+
+
+def _auto_state(shot, card):
+    """True if the Final Boss's auto-buy is on, False if off, None if that spot looks like neither."""
+    s = config.render_scale()
+    x, y = _auto_point(card)
+    half = AUTO_HALF * s
+    area = shot[max(0, int(y * s - half)):int(y * s + half), max(0, int(x * s - half)):int(x * s + half)]
+    if area.size == 0:
+        return None
+    b, g, r = (area[..., i].astype(int) for i in range(3))
+    teal = float((((g - r) > 30) & ((b - r) > 30)).mean())
+    if teal >= AUTO_ON_SHARE:
+        return True
+    return False if teal <= AUTO_OFF_SHARE and 20 <= area.mean() <= 90 else None
+
+
+def _is_forging(shot, card):
+    """True if "Forging" shows over the Final Boss's card: it's bought and on its way."""
+    return _find_near(shot, config.HALLOWEEN_FORGING_TEXT, (card[0], card[1] + FORGING_DY), FORGING_REACH) is not None
 
 
 def _halt(reason):
@@ -371,9 +408,12 @@ _RESUME_AT = [
 # --- The run -------------------------------------------------------------------------------
 
 class HalloweenRunner:
-    def __init__(self, set_phase=None, boss_heat=DEFAULT_BOSS_HEAT):
+    def __init__(self, set_phase=None, boss_heat=DEFAULT_BOSS_HEAT, auto_buy=True):
         self.set_phase = set_phase
         self.boss_heat = boss_heat if boss_heat in BOSS_HEATS else DEFAULT_BOSS_HEAT
+        # The game's auto-buy buys as soon as it can, which is Heat 5. Any later Heat has to be
+        # the macro's own click, with auto-buy kept off so the game doesn't buy early.
+        self.auto_buy = bool(auto_buy) and self.boss_heat == DEFAULT_BOSS_HEAT
         self.consecutive_defeats = 0
         self.resumed = False              # the next Start Game wait is for a stage never left (Repeat Stage)
         self._match_started_at = 0.0
@@ -491,6 +531,7 @@ class HalloweenRunner:
                 if config.STOP_REQUESTED:
                     return None
                 scroll(hover=FORGE_HOVER, notches=FORGE_SCROLL_NOTCHES)
+                time.sleep(0.3 * config.SLOWNESS)    # the list glides, and a moving card can be missed
                 found = _find(config.HALLOWEEN_FINAL_BOSS_TITLE)
                 if found:
                     return found
@@ -555,28 +596,65 @@ class HalloweenRunner:
             path = health.save_debug_screenshot("halloween_no_final_boss")
             print(f"[{TAG}] Couldn't get to the Final Boss card (screen saved: {path}).")
             return False
-        point, recognised = _buy_point(capture_screen(), card)
-        if not recognised and not _buy_is_green(capture_screen(), point):
-            # Nothing says a Buy is there, so nothing gets clicked: a blind click can land on
-            # the unit bar. Returning False tries the whole buy again after BUY_FAIL_COOLDOWN.
-            if not self._buy_fail_saved:
-                self._buy_fail_saved = True
-                path = health.save_debug_screenshot("halloween_no_buy_button")
-                print(f"[{TAG}] The Final Boss's Buy isn't where it should be (screen saved: {path}) - not "
-                      f"clicking, trying again in {BUY_FAIL_COOLDOWN:.0f}s.")
-            return False
-        if recognised and not _buy_is_green(capture_screen(), point):
-            # Grey for a moment longer than the counter (or the candy isn't in yet).
-            deadline = time.time() + BUY_GREEN_WAIT
-            while time.time() < deadline and not config.STOP_REQUESTED:
-                time.sleep(0.25)
-                if _buy_is_green(capture_screen(), point):
-                    break
-            else:
-                print(f"[{TAG}] The Final Boss's Buy is still grey - clicking it anyway.")
-        print(f"[{TAG}] Buying the Final Boss at ({point[0]:.0f}, {point[1]:.0f})"
-              f"{'' if recognised else ' (its Buy button not recognised - clicking where it should be)'}.")
+        if _is_forging(capture_screen(), card):
+            # The game's auto-buy got there first. Buying again would only waste the souls.
+            print(f"[{TAG}] The Final Boss is already forging - nothing to buy.")
+            self._close_forge()
+            self._phase("WAITING FOR MATCH END", "#4fc3f7")
+            return True
+        point = _buy_point(card)
+        deadline = time.time() + BUY_GREEN_WAIT
+        while not _buy_is_green(capture_screen(), point):
+            if time.time() >= deadline or config.STOP_REQUESTED:
+                # Only a green Buy gets clicked: a blind click can land on the unit bar, and a
+                # grey one does nothing. False tries the whole buy again after BUY_FAIL_COOLDOWN.
+                if not self._buy_fail_saved:
+                    self._buy_fail_saved = True
+                    path = health.save_debug_screenshot("halloween_no_buy_button")
+                    print(f"[{TAG}] The Final Boss's Buy isn't green (screen saved: {path}) - not enough souls "
+                          f"yet? Trying again in {BUY_FAIL_COOLDOWN:.0f}s.")
+                return False
+            time.sleep(0.25)
+        print(f"[{TAG}] Buying the Final Boss at ({point[0]:.0f}, {point[1]:.0f}).")
         return self._click_buy(point)
+
+    def _set_forge_auto(self, want_on):
+        """
+        Turns the Final Boss's auto-buy on or off, and only that card's: the button's place comes
+        from the card itself. Reads it first, because a click on one that's already right would
+        flip it the wrong way. True once it reads as wanted.
+        """
+        word = "on" if want_on else "off"
+        card = self._open_forge_and_find_card()
+        if not card:
+            print(f"[{TAG}] Couldn't reach the Final Boss card to turn its auto-buy {word}.")
+            return False
+        time.sleep(0.4 * config.SLOWNESS)
+        card = _find(config.HALLOWEEN_FINAL_BOSS_TITLE) or card
+        done = False
+        for _ in range(AUTO_TOGGLE_TRIES):
+            if config.STOP_REQUESTED:
+                break
+            state = _auto_state(capture_screen(), card)
+            if state is want_on:
+                done = True
+                break
+            if state is None:
+                path = health.save_debug_screenshot("halloween_auto_buy_unreadable")
+                print(f"[{TAG}] Can't tell if the Final Boss's auto-buy is on (screen saved: {path}) - not touching it.")
+                break
+            x, y = _auto_point(card)
+            print(f"[{TAG}] Turning the Final Boss's auto-buy {word} at ({x:.0f}, {y:.0f}).")
+            click_at(x, y)
+            time.sleep(0.8 * config.SLOWNESS)
+        else:
+            done = _auto_state(capture_screen(), card) is want_on
+        if done:
+            print(f"[{TAG}] The Final Boss's auto-buy is {word}.")
+        else:
+            print(f"[{TAG}] Couldn't get the Final Boss's auto-buy {word}.")
+        self._close_forge()
+        return done
 
     def _click_buy(self, point):
         """Buy clicked, then the Forge closed. True."""
@@ -630,6 +708,11 @@ class HalloweenRunner:
         start_looks = [0]
         last_start_press = [0.0]
         lower_after_buy = [0]             # reads below the bought stage since the last read at/above it
+        auto_set = [False]                # the boss's auto-buy reads as this run wants it
+        auto_tries = [0]
+        auto_next = [0.0]
+        left_to_game = [False]            # the Heat was reached and the game's auto-buy should have bought it
+        over_looks = [0]                  # looks past the Heat with the buy left to the game
 
         def bought(stage_now):
             bought_at[0] = time.time()
@@ -689,6 +772,19 @@ class HalloweenRunner:
                 print(f"[{TAG}] Can't read the Heat number (screen saved: {path}) - still watching for the "
                       f"Heat {boss_heat} picture too.")
 
+            # Auto-buy resets when the connection does, and it has to be right before the boss's
+            # Heat. Whichever way it's wanted, it's set at the start of every match: on for the
+            # game to buy at Heat 5, off so the game can't buy before a later Heat.
+            if not auto_set[0] and not bought_at[0] and auto_tries[0] < AUTO_SET_TRIES and now >= auto_next[0]:
+                auto_tries[0] += 1
+                self._phase("SETTING THE FORGE'S AUTO-BUY", "#f9a825")
+                auto_set[0] = self._set_forge_auto(self.auto_buy)
+                auto_next[0] = time.time() + AUTO_SET_RETRY
+                self._phase(f"WAITING FOR HEAT {boss_heat}", "#4fc3f7")
+                if not auto_set[0] and auto_tries[0] >= AUTO_SET_TRIES:
+                    print(f"[{TAG}] Giving up on setting auto-buy this match - the macro will buy the Final Boss itself.")
+                return None
+
             if bought_at[0]:
                 # Back below the stage it was bought at: that match ended and the next one is
                 # running (its end screen was missed) - watch the new one from the start.
@@ -698,6 +794,18 @@ class HalloweenRunner:
                         print(f"[{TAG}] Heat {n} after buying the Final Boss at Heat {bought_stage[0]} - "
                               f"that match is over and the next one is running.")
                         return "RESTARTED"
+                    # Past the Heat with the buy left to the game: it may never have happened (not
+                    # enough souls, say). The Forge shows which: "Forging" means leave it, a green
+                    # Buy means the macro buys it now. Otherwise the match runs on with no boss.
+                    over_looks[0] = over_looks[0] + 1 if left_to_game[0] and n > bought_stage[0] else 0
+                    if over_looks[0] >= STAGE_READS_NEEDED and now >= next_try[0]:
+                        print(f"[{TAG}] Heat {n} and the match is still going - checking the Forge's auto-buy "
+                              f"really bought the Final Boss.")
+                        if self._buy_final_boss():
+                            left_to_game[0] = False
+                        else:
+                            next_try[0] = time.time() + BUY_FAIL_COOLDOWN
+                        over_looks[0] = 0
                 # Bought once - never again this match (the stages carry on after the buy).
                 return None
 
@@ -715,11 +823,18 @@ class HalloweenRunner:
             elif n is not None:
                 reads[0] = 0
             if reads[0] >= STAGE_READS_NEEDED:
-                print(f"[{TAG}] Heat {n or boss_heat} reached ("
-                      f"{'picture ' + format(picture[2], '.2f') if picture else 'digit ' + format(conf, '.2f')}) - "
-                      f"buying the Final Boss.")
+                how = 'picture ' + format(picture[2], '.2f') if picture else 'digit ' + format(conf, '.2f')
                 reads[0] = 0
-                buy(n if n is not None else boss_heat)
+                # Already past the Heat (a match picked up late, or Heat 5 never read): don't assume,
+                # go and look. _buy_final_boss() leaves it alone if it's already forging.
+                if self.auto_buy and auto_set[0] and (n is None or n <= boss_heat):
+                    print(f"[{TAG}] Heat {n or boss_heat} reached ({how}) - the Forge's auto-buy takes it from here.")
+                    self._phase("WAITING FOR MATCH END", "#4fc3f7")
+                    left_to_game[0] = True
+                    bought(n if n is not None else boss_heat)
+                else:
+                    print(f"[{TAG}] Heat {n or boss_heat} reached ({how}) - buying the Final Boss.")
+                    buy(n if n is not None else boss_heat)
             return None
 
         print(f"[{TAG}] Waiting for Heat {boss_heat}...")
@@ -837,10 +952,10 @@ class HalloweenRunner:
         template, match = _find_any(_REPEATS, capture_screen())
         if match:
             print(f"[{TAG}] Clicking Repeat Stage.")
-            if not click_until_gone(template, match, "halloween_repeat", clicks=1):
-                # Auto Retry may have taken it away at the same moment - navigate() reads the screen.
-                path = health.save_debug_screenshot("halloween_repeat_stuck")
-                print(f"[{TAG}] Repeat Stage is still up after clicking (screen saved: {path}).")
+            clicked = click_stage_button(template, match, "halloween_repeat", clicks=1)
+            if clicked == "RECONNECTED":
+                return clicked
+            if clicked is not True:
                 return "LOST"
         return self._after_repeat(end_stage)
 

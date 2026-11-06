@@ -1467,8 +1467,9 @@ class BotEngine:
             self.log(f"Expedition: {label}, difficulty {difficulty}, farming {material_label}, "
                      f"macro '{preset_name}', camera zoom-out {zoom_out_steps}. Starting from: {state}.")
 
+            left_server = False
             if state == "REPEAT":
-                runner.click_repeat_if_present()
+                left_server = runner.click_repeat_if_present() == "RECONNECTED"
                 stage = "PRESTART"
             elif state == "INRUN":
                 self.log("Not at the lobby or a stage start - assuming a run is already going. "
@@ -1477,7 +1478,7 @@ class BotEngine:
                 stage = "INRUN"
             else:
                 stage = "PRESTART"
-            need_nav = state == "LOBBY"
+            need_nav = state == "LOBBY" or left_server
 
             while not config.STOP_REQUESTED:
                 if need_nav:
@@ -1522,7 +1523,12 @@ class BotEngine:
                         # nothing downstream can recognise.
                         return
                     self.log("Expedition repeated - setting up the next run.")
-                    if not runner.click_repeat_if_present():
+                    clicked = runner.click_repeat_if_present()
+                    if clicked == "RECONNECTED":
+                        self.log("The stage wouldn't repeat - went to the lobby for a new server. Redoing navigation...")
+                        need_nav = True
+                        continue
+                    if not clicked:
                         self.log("Repeat Stage didn't click - retrying...")
                         continue
                     stage = "PRESTART"
@@ -1892,19 +1898,20 @@ class BotEngine:
                    f"(or the limit warning on the reward) it walks to the NPC on Flaming Monastery with "
                    f"'{walk_preset_name}' and turns them in. The game's Auto Start and Auto Retry must be OFF.")
 
-    def run_halloween(self, boss_heat=5):
+    def run_halloween(self, boss_heat=5, auto_buy=True):
         """
         Halloween Event (Events page, LIMITED): the event stage on Auto Play, the Final Boss
-        bought from the Forge at the picked Heat, Repeat Stage - the shared runner loop with
-        modules/halloween.py's runner.
+        bought by the Forge's auto-buy or by the macro at the picked Heat, Repeat Stage - the
+        shared runner loop with modules/halloween.py's runner.
         """
         from modules.halloween import HalloweenRunner
+        how = ("the Forge's auto-buy buys the Final Boss at Heat 5" if auto_buy and boss_heat == 5
+               else f"at Heat {boss_heat} it buys the Final Boss from the Forge")
         return self.run_monster_clash(
             "farm", None, _label="Halloween Event",
-            _runner_factory=lambda sp: HalloweenRunner(set_phase=sp, boss_heat=boss_heat),
-            _intro=f"Halloween Event - the event stage on Auto Play; at Heat {boss_heat} it buys the Final Boss from the "
-                   f"Forge, then Repeat Stage (or carries on when the game's Auto Retry restarted it). Auto Start and "
-                   f"Auto Retry can be on or off.")
+            _runner_factory=lambda sp: HalloweenRunner(set_phase=sp, boss_heat=boss_heat, auto_buy=auto_buy),
+            _intro=f"Halloween Event - the event stage on Auto Play; {how}, then Repeat Stage (or carries on when the "
+                   f"game's Auto Retry restarted it). Auto Start and Auto Retry can be on or off.")
 
     def _supervised_run(self, target, args):
         """
